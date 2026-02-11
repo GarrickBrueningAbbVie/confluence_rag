@@ -1,0 +1,34 @@
+# API and Web Requests
+requests
+atlassian-python-api
+
+# Vector Database and Embeddings
+sentence-transformers
+langchain
+langchain-community
+
+# Data Processing
+numpy
+pandas
+
+# UI
+streamlit
+
+# Code Quality
+black
+flake8
+mypy
+pytest
+pytest-cov
+
+# Utilities
+python-dotenv
+PyGithub
+beautifulsoup4
+markdown
+
+# Logging
+loguru
+
+# Type hints
+types-requests
