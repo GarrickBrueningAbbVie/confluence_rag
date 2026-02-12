@@ -88,8 +88,6 @@ def fetch_all_pages():
     print()
 
     # Fetch all pages from the space
-    print("Fetching all pages from the space...")
-    print()
     pages = client.get_all_pages_from_space(space_key)
 
     # Display results
@@ -109,7 +107,13 @@ def fetch_all_pages():
             print(f"   Author: {page.author}")
             print(f"   Modified: {page.modified_date}")
             print(f"   Version: {page.version}")
-            print(f"   Content size: {len(page.content_html or '')} characters")
+            print(f"   Content HTML size: {len(page.content_html or '')} characters")
+            print(f"   Content Text size: {len(page.content_text or '')} characters")
+            print(f"   External links: {len(page.external_links)} links")
+            if page.parent_title:
+                print(f"   Parent: {page.parent_title} (ID: {page.parent_id})")
+            print(f"   Ancestors: {len(page.ancestors)} level(s)")
+            print(f"   Children: {len(page.children)} page(s)")
             print(f"   URL: {page.url}")
             print()
 

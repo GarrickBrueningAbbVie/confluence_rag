@@ -16,11 +16,16 @@ The Atlassian Python API has proven unreliable, so this implementation uses dire
 
 The REST API client provides:
 
-- **Authentication**: Basic auth using username and API token
+- **Authentication**: Bearer token and Basic auth support with automatic fallback
+- **SSL Handling**: Bypasses SSL verification for internal servers with self-signed certificates
 - **Pagination**: Automatically handles paginated results
 - **Page Retrieval**: Fetch all pages from a space with full content
+- **Content Processing**:
+  - Automatic HTML to plain text conversion
+  - External link extraction from page content
+- **Tree Structure**: Captures parent/child relationships and ancestor hierarchy
 - **Search**: CQL-based search capabilities
-- **Data Export**: Save pages to JSON format
+- **Data Export**: Save pages to JSON format with rich metadata
 - **Error Handling**: Robust error handling and logging
 
 ## Usage
@@ -116,6 +121,7 @@ Saves pages to a JSON file.
 
 Each page contains:
 
+### Basic Information
 - `id` - Unique page ID
 - `title` - Page title
 - `space_key` - Space key (e.g., 'DSA')
@@ -125,8 +131,23 @@ Each page contains:
 - `modified_date` - Last modification timestamp
 - `author` - Page author name
 - `version` - Current version number
+
+### Content
 - `content_html` - Full HTML content (storage format)
-- `content_text` - Rendered text content (if available)
+- `content_text` - Plain text content (HTML tags removed). If Confluence doesn't provide view text, automatically extracts from HTML
+- `external_links` - List of external URLs found in the page content
+
+### Tree Structure
+- `parent_id` - ID of the parent page (if any)
+- `parent_title` - Title of the parent page (if any)
+- `ancestors` - List of ancestor pages from root to parent, each containing:
+  - `id` - Ancestor page ID
+  - `title` - Ancestor page title
+  - `type` - Content type (usually "page")
+- `children` - List of child pages, each containing:
+  - `id` - Child page ID
+  - `title` - Child page title
+  - `type` - Content type (usually "page")
 
 ## Configuration
 
