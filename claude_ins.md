@@ -5,7 +5,6 @@ This project will be developed in python. Follow the instructions in `claude_cod
 
 The major components of this project will be the following:
 - A connection to a confluence webpage that we can use to find project documentation.
-- A connection to github repositories that are identified by the confluence pages.
 - A rag pipeline using AbbVie's interal LLM (Iliad API) that can answer questions.
 - A simple UI built in streamlit initially that can be used to ask questions and retrieve answers.
 
@@ -25,13 +24,10 @@ The major components of this project will be the following:
 
 # Primary Components
 ## Confluence Connection
-Develop a connection to confluence using the proper API endpoints that can retrieve the project related pages within the DSA workspace.
-
-## Github connection
-Once the connection from the confluence pages is achieved, find any github links to projects within the pages to access the code repositories. These repositories will assist in answering questions regarding the code associated with projects.
+Develop a connection to confluence using the proper API endpoints that can retrieve the project related pages within the DSA workspace. Accomplish this assuming an internal website and using the REST API version of conlfuences API.
 
 ## Rag Pipeline
-This pipeline will use the confluence pages and github code to answer questions related to projects. Develop a well formatted and thought out rag pipleine that is memory efficieint, time efficient, and overall easy to understand and use.
+This pipeline will use the confluence pages to answer questions related to projects. Develop a well formatted and thought out rag pipleine that is memory efficieint, time efficient, and overall easy to understand and use.
 
 First, vectorize (in the proper manner) the data acquired from the confluence connection. Save this in a proper vector storage file.
 

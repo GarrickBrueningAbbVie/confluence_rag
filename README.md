@@ -6,7 +6,6 @@ A Retrieval Augmented Generation (RAG) system for answering questions about AbbV
 
 This project provides an intelligent question-answering system that:
 - Retrieves project documentation from Confluence
-- Extracts associated GitHub repository information
 - Vectorizes and stores content in a searchable database
 - Uses AbbVie's Iliad API to generate accurate, context-aware answers
 - Provides an intuitive Streamlit UI with AbbVie branding
@@ -14,7 +13,6 @@ This project provides an intelligent question-answering system that:
 ## Features
 
 - **Confluence Integration**: Automatically fetches and parses project documentation from Confluence spaces
-- **GitHub Integration**: Extracts and analyzes associated GitHub repositories
 - **Vector Search**: Uses ChromaDB and sentence transformers for efficient document retrieval
 - **RAG Pipeline**: Combines retrieval with Iliad API for accurate answer generation
 - **Modern UI**: Streamlit-based interface with AbbVie styling
@@ -26,11 +24,9 @@ This project provides an intelligent question-answering system that:
 confluence_rag/
 ├── src/                          # Main source code
 │   ├── confluence/              # Confluence API integration
-│   │   ├── client.py           # API client for retrieving pages
+│   │   ├── rest_client.py      # REST API client for retrieving pages
+│   │   ├── client.py           # Legacy API client (deprecated)
 │   │   └── parser.py           # HTML content parser
-│   ├── github/                 # GitHub API integration
-│   │   ├── client.py           # Repository information retrieval
-│   │   └── parser.py           # Code and README parsing
 │   ├── rag/                    # RAG pipeline components
 │   │   ├── embeddings.py       # Embedding generation
 │   │   ├── vectorstore.py      # Vector database management
@@ -38,9 +34,11 @@ confluence_rag/
 │   ├── ui/                     # Streamlit application
 │   │   └── app.py              # Main UI application
 │   └── config.py               # Configuration management
+├── scripts/                     # Utility scripts
+│   └── fetch_confluence_pages.py  # Fetch and save Confluence pages
 ├── notebooks/                   # Jupyter notebooks
-│   ├── 01_data_acquisition.ipynb    # Data collection and vectorization
-│   └── 02_rag_queries.ipynb         # Query examples
+│   ├── 01_data_acquisition.ipynb  # Data collection and vectorization
+│   └── 02_rag_queries.ipynb       # Query examples
 ├── tests/                       # Unit tests
 ├── config/                      # Configuration files
 │   ├── flake8.cfg              # Linting configuration
@@ -61,7 +59,6 @@ confluence_rag/
 - pip package manager
 - Access to AbbVie's Iliad API
 - Confluence API credentials
-- (Optional) GitHub personal access token for private repositories
 
 ### Setup
 
@@ -97,7 +94,6 @@ confluence_rag/
    CONFLUENCE_USERNAME=your_email@abbvie.com
    CONFLUENCE_API_TOKEN=your_confluence_api_token
    CONFLUENCE_SPACE_KEY=DSA
-   GITHUB_TOKEN=your_github_token  # Optional
    ```
 
 ## Usage
@@ -113,8 +109,6 @@ jupyter notebook notebooks/01_data_acquisition.ipynb
 This notebook will:
 - Connect to Confluence and retrieve all pages from the DSA space
 - Parse and clean the content
-- Extract GitHub repository links
-- Retrieve repository information
 - Generate embeddings and store in ChromaDB
 
 ### 2. Running the Streamlit App
@@ -227,8 +221,8 @@ CONFLUENCE_SPACE_KEY=DSA  # Change to your space
 
 ### Data Flow
 
-1. **Acquisition**: Confluence pages and GitHub repos are fetched via APIs
-2. **Parsing**: HTML and code are converted to structured text
+1. **Acquisition**: Confluence pages are fetched via API
+2. **Parsing**: HTML content is converted to structured text
 3. **Chunking**: Documents are split into optimal-sized chunks
 4. **Embedding**: Text chunks are converted to vectors using sentence transformers
 5. **Storage**: Vectors are stored in ChromaDB with metadata
@@ -238,7 +232,6 @@ CONFLUENCE_SPACE_KEY=DSA  # Change to your space
 ### Key Components
 
 - **ConfluenceClient**: API interaction with Confluence
-- **GitHubClient**: Repository information retrieval
 - **VectorStore**: ChromaDB wrapper for vector storage
 - **EmbeddingManager**: Sentence transformer management
 - **RAGPipeline**: Main orchestration of retrieval and generation

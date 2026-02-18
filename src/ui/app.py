@@ -178,7 +178,7 @@ def main() -> None:
     # Header
     st.title("🔬 AbbVie DSA Project Assistant")
     st.markdown(
-        "Ask questions about Data Science & Analytics projects using Confluence documentation and GitHub repositories."
+        "Ask questions about Data Science & Analytics projects using Confluence documentation."
     )
 
     # Sidebar
@@ -191,7 +191,6 @@ def main() -> None:
 
         **Data Sources:**
         - Confluence project documentation
-        - GitHub repositories
 
         **Powered by:**
         - AbbVie Iliad API
@@ -227,7 +226,7 @@ def main() -> None:
         st.warning(
             """
         ⚠️ The vector database is empty. Please run the data acquisition notebook
-        to populate it with Confluence and GitHub data.
+        to populate it with Confluence data.
         """
         )
         st.stop()
@@ -251,7 +250,6 @@ def main() -> None:
             "What data science projects are documented?",
             "Which projects use machine learning?",
             "What is the purpose of the [project name]?",
-            "What GitHub repositories are associated with [project name]?",
             "What technologies are used in [project name]?",
         ]
         for example in examples:

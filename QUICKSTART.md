@@ -7,7 +7,6 @@ Get up and running with the Confluence RAG Pipeline in minutes.
 - Python 3.9+
 - Confluence API credentials
 - Iliad API access
-- (Optional) GitHub personal access token
 
 ## Installation (5 minutes)
 
@@ -191,7 +190,6 @@ Try asking:
 - "What data science projects are documented?"
 - "Which projects use machine learning?"
 - "What is the purpose of [project name]?"
-- "What GitHub repositories are available?"
 - "What technologies are used in [project name]?"
 
 ## Next Steps

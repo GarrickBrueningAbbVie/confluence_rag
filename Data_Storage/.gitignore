@@ -1,0 +1,4 @@
+# Ignore all files in this directory - contains sensitive vector database data
+*
+# But keep this .gitignore file
+!.gitignore

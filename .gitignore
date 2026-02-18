@@ -67,9 +67,16 @@ dmypy.json
 
 # Data files (sensitive)
 Data_Storage/
+**/Data_Storage/
+vector_db/
+**/vector_db/
 *.db
 *.sqlite
 *.sqlite3
+*.pkl
+*.npy
+confluence_pages.json
+**/confluence_pages.json
 
 # Logs
 *.log

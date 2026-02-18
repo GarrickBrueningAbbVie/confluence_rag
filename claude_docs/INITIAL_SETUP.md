@@ -14,7 +14,6 @@ Complete initial setup and implementation of the Confluence RAG Pipeline project
 Created comprehensive directory structure:
 - `src/` - Main source code with modular components
   - `confluence/` - Confluence API integration
-  - `github/` - GitHub API integration
   - `rag/` - RAG pipeline components
   - `ui/` - Streamlit application
 - `tests/` - Unit test suite
@@ -35,17 +34,6 @@ Created comprehensive directory structure:
   - Converts Confluence HTML to clean text
   - Extracts tables, links, and headers
   - Text chunking for optimal vectorization
-
-#### GitHub Integration ([src/github/](src/github/))
-- **client.py**: GitHub API client
-  - Repository information retrieval
-  - README and file content fetching
-  - Directory traversal for Python files
-
-- **parser.py**: Repository content parser
-  - README section extraction
-  - Python code parsing (functions, classes, imports)
-  - Text summary generation
 
 #### RAG Pipeline ([src/rag/](src/rag/))
 - **embeddings.py**: Embedding generation manager
@@ -81,11 +69,10 @@ Created comprehensive directory structure:
 - **.env.example**: Template for environment variables
   - Iliad API credentials
   - Confluence connection settings
-  - GitHub token (optional)
   - Vector database configuration
 
 - **requirements.txt**: Complete dependency list
-  - API clients (requests, atlassian-python-api, PyGithub)
+  - API clients (requests, atlassian-python-api)
   - Vector search (chromadb, sentence-transformers, langchain)
   - UI (streamlit)
   - Code quality (black, flake8, mypy, pytest)
@@ -111,7 +98,6 @@ Created comprehensive directory structure:
 
 - **01_data_acquisition.ipynb**: Complete data collection workflow
   - Confluence page retrieval
-  - GitHub repository extraction
   - Document chunking and vectorization
   - Vector database population
 
@@ -192,7 +178,7 @@ Created initial test suite:
 ## Dependencies
 
 ### Core Libraries
-- requests, atlassian-python-api, PyGithub (APIs)
+- requests, atlassian-python-api (APIs)
 - chromadb, sentence-transformers (Vector search)
 - streamlit (UI)
 - loguru (Logging)
@@ -235,9 +221,8 @@ Created initial test suite:
 ## Known Limitations
 
 1. Iliad API response format may need adjustment based on actual API
-2. GitHub rate limits may affect large repository collections
-3. Vector database grows with content (monitoring recommended)
-4. Confluence HTML parsing may need tweaks for special cases
+2. Vector database grows with content (monitoring recommended)
+3. Confluence HTML parsing may need tweaks for special cases
 
 ## Validation Checklist
 
