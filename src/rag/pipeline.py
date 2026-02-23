@@ -3,8 +3,8 @@
 from typing import List, Dict, Any, Optional
 import requests
 from loguru import logger
-from src.rag.vectorstore import VectorStore
-from src.rag.embeddings import EmbeddingManager
+from rag.vectorstore import VectorStore
+from rag.embeddings import EmbeddingManager
 
 
 class RAGPipeline:
@@ -108,7 +108,12 @@ class RAGPipeline:
             context: Context information from retrieved documents.
 
         Returns:
-            API response dictionary.
+            API response dictionary with structure:
+            {
+                "completion": {
+                    "content": "The AI response text"
+                }
+            }
         """
         logger.info("Calling Iliad API")
 
@@ -169,14 +174,37 @@ Please provide a clear, accurate answer based on the context provided."""
         try:
             response = self.call_iliad_api(instructions, context)
 
-            # Extract answer from response
-            # Adjust this based on actual Iliad API response format
+            # Log the response structure for debugging
+            logger.debug(f"Iliad API response type: {type(response)}")
             if isinstance(response, dict):
-                answer = response.get("content", str(response))
+                logger.debug(f"Iliad API response keys: {response.keys()}")
+
+            # Extract answer from Iliad API response structure
+            # Response format: {"response_id": "...", "completion": {"role": "assistant", "content": "answer text"}}
+            answer = ""
+
+            if isinstance(response, dict):
+                if "completion" in response:
+                    completion = response.get("completion", {})
+                    if isinstance(completion, dict):
+                        answer = completion.get("content", "")
+                        logger.debug(f"Extracted answer length: {len(answer)}")
+                    else:
+                        logger.warning(f"completion is not a dict: {type(completion)}")
+                        answer = str(completion)
+                else:
+                    # Fallback: try to get content directly
+                    logger.warning(f"No 'completion' key in response. Keys: {response.keys()}")
+                    answer = response.get("content", "")
             else:
+                logger.warning(f"Response is not a dict: {type(response)}")
                 answer = str(response)
 
-            logger.info("Successfully generated answer")
+            if not answer:
+                logger.error(f"Empty answer received. Full response: {response}")
+                raise ValueError("Empty answer received from Iliad API")
+
+            logger.info(f"Successfully generated answer ({len(answer)} characters)")
             return answer
 
         except Exception as e:

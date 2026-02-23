@@ -5,7 +5,7 @@ import numpy as np
 import pickle
 import os
 from loguru import logger
-from src.rag.embeddings import EmbeddingManager
+from rag.embeddings import EmbeddingManager
 
 
 class VectorStore:

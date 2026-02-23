@@ -18,6 +18,16 @@ def iliad_call_single_content(
 
     Returns:
         requests.Response: The API response object.
+
+    Response Structure:
+        The response JSON has the following structure:
+        {
+            "completion": {
+                "content": "The actual response text from the AI model"
+            }
+        }
+
+        To extract the answer: response.json()['completion']['content']
     """
     headers = {"X-API-Key": ILIAD_API_KEY}
 

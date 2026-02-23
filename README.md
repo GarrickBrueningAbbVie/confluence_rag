@@ -25,25 +25,28 @@ confluence_rag/
 ├── src/                          # Main source code
 │   ├── confluence/              # Confluence API integration
 │   │   ├── rest_client.py      # REST API client for retrieving pages
+│   │   ├── fetch_pages.py      # Standalone script to fetch Confluence pages
 │   │   ├── client.py           # Legacy API client (deprecated)
 │   │   └── parser.py           # HTML content parser
 │   ├── rag/                    # RAG pipeline components
 │   │   ├── embeddings.py       # Embedding generation
 │   │   ├── vectorstore.py      # Vector database management
+│   │   ├── vectorize_data.py   # Standalone script to vectorize data
 │   │   └── pipeline.py         # Main RAG pipeline
 │   ├── ui/                     # Streamlit application
 │   │   └── app.py              # Main UI application
 │   └── config.py               # Configuration management
-├── scripts/                     # Utility scripts
-│   └── fetch_confluence_pages.py  # Fetch and save Confluence pages
 ├── notebooks/                   # Jupyter notebooks
 │   ├── 01_data_acquisition.ipynb  # Data collection and vectorization
-│   └── 02_rag_queries.ipynb       # Query examples
+│   ├── 02_rag_queries.ipynb       # Query examples
+│   └── Data_Storage/           # Notebook-specific data storage (gitignored)
 ├── tests/                       # Unit tests
 ├── config/                      # Configuration files
 │   ├── flake8.cfg              # Linting configuration
 │   └── mypy.ini                # Type checking configuration
-├── Data_Storage/               # Vector database storage (gitignored)
+├── Data_Storage/               # Primary data storage (gitignored)
+│   ├── confluence_pages.json   # Raw Confluence data (gitignored)
+│   └── vector_db/              # Vector database files (gitignored)
 ├── claude_docs/                # Claude change documentation
 ├── requirements.txt            # Python dependencies
 ├── Makefile                    # Development commands
@@ -100,16 +103,43 @@ confluence_rag/
 
 ### 1. Data Acquisition
 
-First, collect and vectorize the data from Confluence and GitHub:
+There are two ways to collect and vectorize data:
+
+#### Option A: Using Standalone Scripts (Recommended for Production)
+
+**Step 1: Fetch Confluence Pages**
+```bash
+python src/confluence/fetch_pages.py
+```
+
+This script will:
+- Connect to Confluence using REST API
+- Retrieve all pages from the configured space
+- Save raw JSON data to `Data_Storage/confluence_pages.json`
+
+**Step 2: Generate Embeddings and Store in Vector Database**
+```bash
+python src/rag/vectorize_data.py
+```
+
+This script will:
+- Load the Confluence pages JSON
+- Chunk documents for optimal retrieval
+- Generate embeddings using sentence transformers
+- Store vectors in `Data_Storage/vector_db/`
+
+#### Option B: Using Jupyter Notebook (Recommended for Exploration)
 
 ```bash
 jupyter notebook notebooks/01_data_acquisition.ipynb
 ```
 
-This notebook will:
+This notebook provides an interactive way to:
 - Connect to Confluence and retrieve all pages from the DSA space
+- Save raw JSON data for backup
 - Parse and clean the content
 - Generate embeddings and store in ChromaDB
+- Visualize the data and test queries
 
 ### 2. Running the Streamlit App
 
@@ -132,10 +162,16 @@ jupyter notebook notebooks/02_rag_queries.ipynb
 ### 4. Programmatic Usage
 
 ```python
-from src.config import config
-from src.rag.vectorstore import VectorStore
-from src.rag.embeddings import EmbeddingManager
-from src.rag.pipeline import RAGPipeline
+import sys
+from pathlib import Path
+
+# Add src to path if running outside of package
+sys.path.insert(0, str(Path(__file__).parent / 'src'))
+
+from config import config
+from rag.vectorstore import VectorStore
+from rag.embeddings import EmbeddingManager
+from rag.pipeline import RAGPipeline
 
 # Initialize components
 vector_store = VectorStore(
@@ -231,10 +267,13 @@ CONFLUENCE_SPACE_KEY=DSA  # Change to your space
 
 ### Key Components
 
-- **ConfluenceClient**: API interaction with Confluence
-- **VectorStore**: ChromaDB wrapper for vector storage
+- **ConfluenceRestClient**: REST API integration with Confluence
+- **ConfluenceClient**: Legacy API client (deprecated)
+- **VectorStore**: Vector database with numpy and pickle persistence
 - **EmbeddingManager**: Sentence transformer management
 - **RAGPipeline**: Main orchestration of retrieval and generation
+- **fetch_pages.py**: Standalone script for data acquisition
+- **vectorize_data.py**: Standalone script for vectorization
 
 ## Troubleshooting
 
@@ -242,7 +281,11 @@ CONFLUENCE_SPACE_KEY=DSA  # Change to your space
 
 **Issue**: Vector database is empty
 ```bash
-# Run the data acquisition notebook to populate the database
+# Option 1: Run standalone scripts
+python src/confluence/fetch_pages.py
+python src/rag/vectorize_data.py
+
+# Option 2: Run the data acquisition notebook
 jupyter notebook notebooks/01_data_acquisition.ipynb
 ```
 
@@ -264,6 +307,16 @@ jupyter notebook notebooks/01_data_acquisition.ipynb
 source .venv/bin/activate
 # Reinstall dependencies
 pip install -r requirements.txt
+
+# For standalone scripts, imports are handled automatically
+# All scripts use: sys.path.insert(0, str(Path(__file__).parent.parent))
+```
+
+**Issue**: Data Storage directory missing
+```bash
+# The directory is created automatically when running scripts
+# But you can create it manually if needed:
+mkdir -p Data_Storage/vector_db
 ```
 
 ## Performance Optimization
@@ -278,7 +331,12 @@ pip install -r requirements.txt
 - Never commit `.env` file or credentials
 - Use environment variables for all sensitive data
 - API tokens should have minimal required permissions
-- Vector database stored locally (not in git)
+- Vector database and raw data are protected by `.gitignore`:
+  - `Data_Storage/` - All data storage directories
+  - `confluence_pages.json` - Raw Confluence exports
+  - `vector_db/` - Vector database files
+  - `*.pkl`, `*.npy` - Pickle and numpy array files
+- Each data storage directory has its own `.gitignore` for extra protection
 
 ## Contributing
 
