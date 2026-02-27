@@ -11,6 +11,9 @@ langchain-community
 numpy
 pandas
 
+# NLP
+nltk
+
 # UI
 streamlit
 

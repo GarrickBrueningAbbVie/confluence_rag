@@ -52,8 +52,11 @@ def chunk_pages(pages_data: List[Dict[str, Any]],
             chunk_overlap=chunk_overlap
         )
 
-        # Create chunk objects with metadata
+        # Create chunk objects with metadata including hierarchy info for re-ranking
         for i, chunk in enumerate(text_chunks):
+            # Get children list (needed for re-ranking)
+            children = page.get('children', [])
+
             chunks.append({
                 'text': chunk,
                 'metadata': {
@@ -64,7 +67,14 @@ def chunk_pages(pages_data: List[Dict[str, Any]],
                     'space': page.get('space', page.get('space_key', '')),
                     'author': page.get('author', ''),
                     'version': page.get('version', ''),
-                    'page_id': page.get('id', '')
+                    'page_id': page.get('id', ''),
+                    # Hierarchy metadata for re-ranking
+                    'depth': page.get('depth', len(page.get('ancestors', [])) + 1),
+                    'parent_id': page.get('parent_id', ''),
+                    'parent_title': page.get('parent_title', ''),
+                    'children': children,
+                    'has_children': len(children) > 0,
+                    'children_count': len(children),
                 }
             })
 

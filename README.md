@@ -17,6 +17,8 @@ This project provides an intelligent question-answering system that:
 - **RAG Pipeline**: Combines retrieval with Iliad API for accurate answer generation
 - **Modern UI**: Streamlit-based interface with AbbVie styling
 - **Extensible Architecture**: Well-structured, typed Python code following best practices
+- **Advanced Query Processing**: NLTK-powered keyword extraction and lemmatization
+- **Composite Re-ranking**: Multi-signal scoring using page hierarchy, keyword matching, and similarity metrics
 
 ## Project Structure
 
@@ -32,7 +34,9 @@ confluence_rag/
 │   │   ├── embeddings.py       # Embedding generation
 │   │   ├── vectorstore.py      # Vector database management
 │   │   ├── vectorize_data.py   # Standalone script to vectorize data
-│   │   └── pipeline.py         # Main RAG pipeline
+│   │   ├── pipeline.py         # Main RAG pipeline
+│   │   ├── query_processor.py  # Query preprocessing and keyword extraction
+│   │   └── reranker.py         # Composite scoring document re-ranker
 │   ├── ui/                     # Streamlit application
 │   │   └── app.py              # Main UI application
 │   └── config.py               # Configuration management
@@ -257,13 +261,15 @@ CONFLUENCE_SPACE_KEY=DSA  # Change to your space
 
 ### Data Flow
 
-1. **Acquisition**: Confluence pages are fetched via API
+1. **Acquisition**: Confluence pages are fetched via API with hierarchy depth
 2. **Parsing**: HTML content is converted to structured text
 3. **Chunking**: Documents are split into optimal-sized chunks
 4. **Embedding**: Text chunks are converted to vectors using sentence transformers
-5. **Storage**: Vectors are stored in ChromaDB with metadata
-6. **Query**: User questions are embedded and matched against stored vectors
-7. **Generation**: Retrieved context + question sent to Iliad API for answer generation
+5. **Storage**: Vectors are stored in ChromaDB with metadata including page depth
+6. **Query Processing**: User questions are preprocessed to extract keywords and entities
+7. **Retrieval**: Initial retrieval using vector similarity
+8. **Re-ranking**: Documents re-ranked using composite scoring (similarity, keywords in title, page depth, etc.)
+9. **Generation**: Retrieved context + question sent to Iliad API for answer generation
 
 ### Key Components
 
@@ -272,6 +278,8 @@ CONFLUENCE_SPACE_KEY=DSA  # Change to your space
 - **VectorStore**: Vector database with numpy and pickle persistence
 - **EmbeddingManager**: Sentence transformer management
 - **RAGPipeline**: Main orchestration of retrieval and generation
+- **QueryProcessor**: NLTK-based keyword extraction and query preprocessing
+- **DocumentReranker**: Composite scoring for improved document ranking
 - **fetch_pages.py**: Standalone script for data acquisition
 - **vectorize_data.py**: Standalone script for vectorization
 
