@@ -26,9 +26,7 @@ class EmbeddingManager:
         logger.info(f"Loading embedding model: {model_name}")
         self.model = SentenceTransformer(model_name)
         self.embedding_dimension = self.model.get_sentence_embedding_dimension()
-        logger.info(
-            f"Embedding model loaded. Dimension: {self.embedding_dimension}"
-        )
+        logger.info(f"Embedding model loaded. Dimension: {self.embedding_dimension}")
 
     def generate_embedding(self, text: str) -> np.ndarray:
         """
