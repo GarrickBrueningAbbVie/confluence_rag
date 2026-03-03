@@ -3,6 +3,7 @@ ARCHITECTURE.md
 claude_rag_ins.md
 QUICKSTART.md
 *.md
+/.claude
 
 # Python
 __pycache__/

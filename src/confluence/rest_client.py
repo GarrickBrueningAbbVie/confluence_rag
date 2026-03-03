@@ -22,7 +22,33 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 @dataclass
 class ConfluencePage:
-    """Represents a Confluence page with its metadata."""
+    """Represents a Confluence page with its metadata.
+
+    Attributes:
+        id: Unique page identifier
+        title: Page title
+        space_key: Confluence space key (e.g., 'DSA')
+        space_name: Full space name
+        url: Web URL to the page
+        created_date: ISO format creation date
+        modified_date: ISO format last modification date
+        author: Display name of last author
+        version: Page version number
+        content_html: Raw HTML content (storage format)
+        content_text: Extracted plain text content
+        external_links: List of external URLs found in content
+        parent_id: ID of parent page (if any)
+        parent_title: Title of parent page (if any)
+        ancestors: List of ancestor pages from root to parent
+        children: List of child pages
+        depth: Page hierarchy depth (1 = top-level)
+        attachments: List of attachment metadata dicts
+        attachment_content: Extracted text from all attachments
+        parent_project: Name of the parent project (for DSA pages)
+        technologies: List of technologies used in this project
+        completeness_score: Project completeness score (0-100, NaN for subpages)
+        completeness_summary: Summary of completeness assessment
+    """
 
     id: str
     title: str
@@ -41,6 +67,13 @@ class ConfluencePage:
     ancestors: List[Dict[str, str]] = field(default_factory=list)
     children: List[Dict[str, str]] = field(default_factory=list)
     depth: int = 1  # Page hierarchy depth: 1 = top-level, higher = deeper in tree
+    # New fields for preprocessing enhancements
+    attachments: List[Dict[str, Any]] = field(default_factory=list)
+    attachment_content: str = ""
+    parent_project: Optional[str] = None
+    technologies: List[str] = field(default_factory=list)
+    completeness_score: Optional[float] = None
+    completeness_summary: Optional[str] = None
 
 
 class ConfluenceRestClient:
@@ -323,6 +356,103 @@ class ConfluenceRestClient:
             print(f"Error fetching page {page_id}: {e}")
             return None
 
+    def get_attachments(self, page_id: str) -> List[Dict[str, Any]]:
+        """
+        Fetch attachments for a specific page.
+
+        Uses the Confluence REST API endpoint:
+        /rest/api/content/{id}/child/attachment
+
+        Args:
+            page_id: The ID of the Confluence page
+
+        Returns:
+            List of attachment metadata dictionaries, each containing:
+            - id: Attachment ID
+            - title: Filename
+            - mediaType: MIME type
+            - fileSize: Size in bytes
+            - download_url: Full URL to download the attachment
+
+        Example:
+            >>> attachments = client.get_attachments("123456")
+            >>> for att in attachments:
+            ...     print(f"{att['title']} ({att['mediaType']})")
+        """
+        url = f"{self.base_url}/rest/api/content/{page_id}/child/attachment"
+        attachments = []
+
+        try:
+            response = self.session.get(url)
+            response.raise_for_status()
+            data = response.json()
+
+            results = data.get("results", [])
+            for attachment in results:
+                # Extract download link from _links
+                links = attachment.get("_links", {})
+                download_path = links.get("download", "")
+
+                # Construct full download URL
+                download_url = ""
+                if download_path:
+                    download_url = f"{self.base_url}/wiki{download_path}"
+
+                att_data = {
+                    "id": attachment.get("id", ""),
+                    "title": attachment.get("title", ""),
+                    "mediaType": attachment.get("metadata", {}).get("mediaType", ""),
+                    "fileSize": attachment.get("extensions", {}).get("fileSize", 0),
+                    "download_url": download_url,
+                    "created_date": attachment.get("history", {}).get("createdDate", ""),
+                    "comment": attachment.get("metadata", {}).get("comment", ""),
+                }
+                attachments.append(att_data)
+
+            logger.debug(f"Found {len(attachments)} attachments for page {page_id}")
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Failed to fetch attachments for page {page_id}: {e}")
+
+        return attachments
+
+    def download_attachment(
+        self,
+        download_url: str,
+        output_path: Optional[str] = None,
+    ) -> Optional[bytes]:
+        """
+        Download an attachment file.
+
+        Args:
+            download_url: Full URL to download the attachment
+            output_path: Optional path to save the file. If None, returns bytes.
+
+        Returns:
+            File content as bytes if output_path is None, else None after saving.
+
+        Example:
+            >>> content = client.download_attachment(att['download_url'])
+            >>> # or save to file
+            >>> client.download_attachment(att['download_url'], '/tmp/file.pdf')
+        """
+        try:
+            response = self.session.get(download_url)
+            response.raise_for_status()
+
+            if output_path:
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, 'wb') as f:
+                    f.write(response.content)
+                logger.debug(f"Downloaded attachment to {output_path}")
+                return None
+            else:
+                return response.content
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to download attachment from {download_url}: {e}")
+            return None
+
     def search_pages(self, cql: str, limit: int = 100) -> List[ConfluencePage]:
         """
         Search for pages using Confluence Query Language (CQL).
@@ -526,6 +656,13 @@ class ConfluenceRestClient:
                 "ancestors": page.ancestors,
                 "children": page.children,
                 "depth": page.depth,
+                # New preprocessing fields
+                "attachments": page.attachments,
+                "attachment_content": page.attachment_content,
+                "parent_project": page.parent_project,
+                "technologies": page.technologies,
+                "completeness_score": page.completeness_score,
+                "completeness_summary": page.completeness_summary,
             }
             for page in pages
         ]
