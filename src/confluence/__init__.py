@@ -1,6 +1,7 @@
 """Confluence API integration module."""
 
-from src.confluence.client import ConfluenceClient
-from src.confluence.parser import ConfluenceParser
+from confluence.client import ConfluenceClient
+from confluence.parser import ConfluenceParser
+from confluence.rest_client import ConfluenceRestClient
 
-__all__ = ["ConfluenceClient", "ConfluenceParser"]
+__all__ = ["ConfluenceClient", "ConfluenceParser", "ConfluenceRestClient"]

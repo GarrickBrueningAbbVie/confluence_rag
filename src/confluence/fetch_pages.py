@@ -10,6 +10,9 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Add src directory to path to import confluence module
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from confluence.rest_client import ConfluenceRestClient
 
 
@@ -118,8 +121,10 @@ def fetch_all_pages():
             print(f"... and {len(pages) - 10} more pages")
             print()
 
-        # Save to JSON
-        output_dir = Path(__file__).parent
+        # Save to JSON in root Data_Storage directory
+        project_root = Path(__file__).parent.parent.parent
+        output_dir = project_root / 'Data_Storage'
+        output_dir.mkdir(parents=True, exist_ok=True)
         output_file = output_dir / 'confluence_pages.json'
 
         print("-" * 80)

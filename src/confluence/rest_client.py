@@ -40,6 +40,7 @@ class ConfluencePage:
     parent_title: Optional[str] = None
     ancestors: List[Dict[str, str]] = field(default_factory=list)
     children: List[Dict[str, str]] = field(default_factory=list)
+    depth: int = 1  # Page hierarchy depth: 1 = top-level, higher = deeper in tree
 
 
 class ConfluenceRestClient:
@@ -464,6 +465,11 @@ class ConfluenceRestClient:
                 for child in results
             ]
 
+        # Calculate page depth from ancestors
+        # Depth 1 = root/top-level pages (no ancestors or only space home)
+        # Depth increases with each ancestor level
+        depth = len(ancestors) + 1
+
         return ConfluencePage(
             id=page_id,
             title=title,
@@ -481,6 +487,7 @@ class ConfluenceRestClient:
             parent_title=parent_title,
             ancestors=ancestors,
             children=children,
+            depth=depth,
         )
 
     def save_pages_to_json(
@@ -518,6 +525,7 @@ class ConfluenceRestClient:
                 "parent_title": page.parent_title,
                 "ancestors": page.ancestors,
                 "children": page.children,
+                "depth": page.depth,
             }
             for page in pages
         ]

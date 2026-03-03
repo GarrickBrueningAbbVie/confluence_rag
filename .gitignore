@@ -1,4 +1,8 @@
 .env
+ARCHITECTURE.md
+claude_rag_ins.md
+QUICKSTART.md
+*.md
 
 # Python
 __pycache__/

@@ -3,8 +3,10 @@
 from typing import List, Dict, Any, Optional
 import requests
 from loguru import logger
-from src.rag.vectorstore import VectorStore
-from src.rag.embeddings import EmbeddingManager
+from rag.vectorstore import VectorStore
+from rag.embeddings import EmbeddingManager
+from rag.query_processor import QueryProcessor, ProcessedQuery
+from rag.reranker import DocumentReranker, RankingWeights
 
 
 class RAGPipeline:
@@ -22,6 +24,8 @@ class RAGPipeline:
         iliad_api_key: str,
         iliad_api_url: str,
         top_k: int = 5,
+        use_reranking: bool = True,
+        ranking_weights: Optional[RankingWeights] = None,
     ) -> None:
         """
         Initialize the RAG pipeline.
@@ -32,19 +36,37 @@ class RAGPipeline:
             iliad_api_key: API key for Iliad authentication.
             iliad_api_url: URL endpoint for Iliad API.
             top_k: Number of relevant documents to retrieve. Defaults to 5.
+            use_reranking: Whether to use composite scoring re-ranking. Defaults to True.
+            ranking_weights: Custom weights for re-ranking. Uses defaults if None.
         """
         self.vector_store = vector_store
         self.embedding_manager = embedding_manager
         self.iliad_api_key = iliad_api_key
         self.iliad_api_url = iliad_api_url
         self.top_k = top_k
-        logger.info("Initialized RAG pipeline")
+        self.use_reranking = use_reranking
+
+        # Initialize query processor for keyword extraction
+        self.query_processor = QueryProcessor()
+
+        # Initialize re-ranker if enabled
+        if use_reranking:
+            self.reranker = DocumentReranker(
+                weights=ranking_weights,
+                embedding_manager=embedding_manager,
+            )
+        else:
+            self.reranker = None
+
+        logger.info(
+            f"Initialized RAG pipeline (reranking: {use_reranking})"
+        )
 
     def retrieve_relevant_documents(
         self, query: str, n_results: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Retrieve relevant documents from the vector store.
+        Retrieve relevant documents from the vector store with optional re-ranking.
 
         Args:
             query: User's question or query.
@@ -54,14 +76,63 @@ class RAGPipeline:
             Dictionary containing retrieved documents, metadatas, and distances.
         """
         n_results = n_results or self.top_k
-        logger.info(f"Retrieving {n_results} relevant documents for query")
+
+        # Process query to extract keywords
+        processed_query = self.query_processor.process_query(query)
+        logger.info(
+            f"Processed query - Keywords: {processed_query.keywords}, "
+            f"Projects: {processed_query.potential_project_names}, "
+            f"People: {processed_query.potential_person_names}"
+        )
+
+        # Retrieve more documents initially if re-ranking is enabled
+        # This allows re-ranking to potentially surface better matches
+        initial_retrieve = n_results * 3 if self.use_reranking else n_results
+        logger.info(f"Retrieving {initial_retrieve} documents for query (reranking: {self.use_reranking})")
 
         try:
-            results = self.vector_store.query(query_text=query, n_results=n_results)
+            results = self.vector_store.query(query_text=query, n_results=initial_retrieve)
             logger.info(
                 f"Retrieved {len(results['documents'])} documents with "
-                f"distances: {results['distances']}"
+                f"distances: {results['distances'][:5]}..."  # Log first 5 distances
             )
+
+            # Apply re-ranking if enabled
+            if self.use_reranking and self.reranker and len(results['documents']) > 0:
+                logger.info("Applying composite scoring re-ranking")
+
+                # Generate query embedding for title similarity
+                query_embedding = self.embedding_manager.generate_embedding(query)
+
+                # Re-rank documents
+                scored_docs = self.reranker.rerank(
+                    documents=results['documents'],
+                    metadatas=results['metadatas'],
+                    ids=results['ids'],
+                    distances=results['distances'],
+                    processed_query=processed_query,
+                    query_embedding=query_embedding,
+                )
+
+                # Extract top results after re-ranking
+                results = self.reranker.extract_reranked_results(scored_docs, n_results)
+
+                logger.info(
+                    f"Re-ranked results. Top composite scores: "
+                    f"{results.get('composite_scores', [])[:3]}"
+                )
+            else:
+                # Trim to requested number if not re-ranking
+                results = {
+                    'documents': results['documents'][:n_results],
+                    'metadatas': results['metadatas'][:n_results],
+                    'distances': results['distances'][:n_results],
+                    'ids': results['ids'][:n_results],
+                }
+
+            # Store processed query for potential use in generation
+            results['processed_query'] = processed_query
+
             return results
         except Exception as e:
             logger.error(f"Error retrieving documents: {str(e)}")
@@ -108,7 +179,12 @@ class RAGPipeline:
             context: Context information from retrieved documents.
 
         Returns:
-            API response dictionary.
+            API response dictionary with structure:
+            {
+                "completion": {
+                    "content": "The AI response text"
+                }
+            }
         """
         logger.info("Calling Iliad API")
 
@@ -169,14 +245,37 @@ Please provide a clear, accurate answer based on the context provided."""
         try:
             response = self.call_iliad_api(instructions, context)
 
-            # Extract answer from response
-            # Adjust this based on actual Iliad API response format
+            # Log the response structure for debugging
+            logger.debug(f"Iliad API response type: {type(response)}")
             if isinstance(response, dict):
-                answer = response.get("content", str(response))
+                logger.debug(f"Iliad API response keys: {response.keys()}")
+
+            # Extract answer from Iliad API response structure
+            # Response format: {"response_id": "...", "completion": {"role": "assistant", "content": "answer text"}}
+            answer = ""
+
+            if isinstance(response, dict):
+                if "completion" in response:
+                    completion = response.get("completion", {})
+                    if isinstance(completion, dict):
+                        answer = completion.get("content", "")
+                        logger.debug(f"Extracted answer length: {len(answer)}")
+                    else:
+                        logger.warning(f"completion is not a dict: {type(completion)}")
+                        answer = str(completion)
+                else:
+                    # Fallback: try to get content directly
+                    logger.warning(f"No 'completion' key in response. Keys: {response.keys()}")
+                    answer = response.get("content", "")
             else:
+                logger.warning(f"Response is not a dict: {type(response)}")
                 answer = str(response)
 
-            logger.info("Successfully generated answer")
+            if not answer:
+                logger.error(f"Empty answer received. Full response: {response}")
+                raise ValueError("Empty answer received from Iliad API")
+
+            logger.info(f"Successfully generated answer ({len(answer)} characters)")
             return answer
 
         except Exception as e:
@@ -199,7 +298,7 @@ Please provide a clear, accurate answer based on the context provided."""
         logger.info(f"Processing query: {question}")
 
         try:
-            # Step 1: Retrieve relevant documents
+            # Step 1: Retrieve relevant documents (with re-ranking if enabled)
             retrieved = self.retrieve_relevant_documents(question, n_results)
 
             # Step 2: Format context
@@ -218,6 +317,20 @@ Please provide a clear, accurate answer based on the context provided."""
                 "retrieved_documents": retrieved["documents"],
                 "distances": retrieved["distances"],
             }
+
+            # Add re-ranking information if available
+            if "composite_scores" in retrieved:
+                result["composite_scores"] = retrieved["composite_scores"]
+            if "score_breakdown" in retrieved:
+                result["score_breakdown"] = retrieved["score_breakdown"]
+            if "processed_query" in retrieved:
+                processed = retrieved["processed_query"]
+                result["query_analysis"] = {
+                    "keywords": processed.keywords,
+                    "lemmatized_keywords": processed.lemmatized_keywords,
+                    "potential_projects": processed.potential_project_names,
+                    "potential_people": processed.potential_person_names,
+                }
 
             logger.info("Successfully completed RAG query")
             return result

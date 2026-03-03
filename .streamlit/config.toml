@@ -1,0 +1,15 @@
+[theme]
+# AbbVie dark mode theme
+primaryColor = "#8A2ECC"  # AbbVie Purple
+backgroundColor = "#0E1117"  # Dark background
+secondaryBackgroundColor = "#262730"  # Slightly lighter dark
+textColor = "#FFFFFF"  # White text
+font = "sans serif"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
