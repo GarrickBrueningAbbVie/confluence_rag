@@ -4,10 +4,18 @@ Query router for hybrid RAG + Database pipeline.
 This module routes queries to the appropriate pipeline(s) based on
 intent classification and combines results.
 
+Two modes are available:
+1. Rule-based (default): Fast keyword matching for simple queries
+2. Smart mode: LLM-based query decomposition for complex queries
+
 Example:
     >>> from routing.query_router import QueryRouter
     >>> router = QueryRouter(rag_pipeline, db_pipeline, iliad_client)
     >>> result = router.route("How many pages use Python?")
+
+    >>> # Enable smart mode for complex queries
+    >>> router = QueryRouter(rag_pipeline, db_pipeline, iliad_client, use_smart_routing=True)
+    >>> result = router.route("Describe ALFA and count how many projects reference it")
 """
 
 from typing import Any, Dict, List, Optional
@@ -49,6 +57,7 @@ class QueryRouter:
         db_pipeline: Optional["DatabasePipeline"] = None,
         iliad_client: Optional["IliadClient"] = None,
         use_llm_fallback: bool = False,
+        use_smart_routing: bool = False,
     ) -> None:
         """Initialize query router.
 
@@ -57,10 +66,12 @@ class QueryRouter:
             db_pipeline: Optional database pipeline instance
             iliad_client: Optional Iliad client for LLM operations
             use_llm_fallback: Whether to use LLM for ambiguous classification
+            use_smart_routing: Use LLM-based smart routing with query decomposition
         """
         self.rag_pipeline = rag_pipeline
         self.db_pipeline = db_pipeline
         self.iliad_client = iliad_client
+        self.use_smart_routing = use_smart_routing
 
         self.classifier = IntentClassifier(
             iliad_client=iliad_client,
@@ -69,8 +80,21 @@ class QueryRouter:
 
         self.combiner = ResponseCombiner(iliad_client=iliad_client)
 
+        # Initialize smart router if enabled
+        if use_smart_routing and iliad_client:
+            from .smart_router import SmartQueryRouter
+
+            self.smart_router = SmartQueryRouter(
+                rag_pipeline=rag_pipeline,
+                db_pipeline=db_pipeline,
+                iliad_client=iliad_client,
+            )
+        else:
+            self.smart_router = None
+
         logger.info(
-            f"Initialized QueryRouter (DB pipeline: {db_pipeline is not None})"
+            f"Initialized QueryRouter "
+            f"(DB: {db_pipeline is not None}, Smart: {use_smart_routing})"
         )
 
     def route(
@@ -78,14 +102,16 @@ class QueryRouter:
         query: str,
         force_intent: Optional[QueryIntent] = None,
         return_metadata: bool = True,
+        use_smart: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Route a query to appropriate pipeline(s).
 
         Args:
             query: User query string
-            force_intent: Optional intent override
+            force_intent: Optional intent override (disables smart routing)
             return_metadata: Whether to include routing metadata
+            use_smart: Override smart routing setting for this query
 
         Returns:
             Dict with:
@@ -100,6 +126,14 @@ class QueryRouter:
             >>> result = router.route("How many pages use Airflow?")
             >>> print(result['answer'])
         """
+        # Determine if we should use smart routing
+        should_use_smart = use_smart if use_smart is not None else self.use_smart_routing
+
+        # Use smart router if enabled and no forced intent
+        if should_use_smart and self.smart_router and not force_intent:
+            return self._route_smart(query, return_metadata)
+
+        # Fall back to rule-based routing
         result = {
             "success": False,
             "answer": None,
@@ -126,6 +160,7 @@ class QueryRouter:
                 "intent": classification.intent.value,
                 "confidence": classification.confidence,
                 "reasoning": classification.reasoning,
+                "routing_mode": "rule_based",
             }
 
         logger.info(
@@ -150,6 +185,52 @@ class QueryRouter:
         except Exception as e:
             logger.error(f"Routing failed: {e}")
             result["error"] = str(e)
+
+        return result
+
+    def _route_smart(
+        self,
+        query: str,
+        return_metadata: bool = True,
+    ) -> Dict[str, Any]:
+        """Route using smart LLM-based router.
+
+        Args:
+            query: User query
+            return_metadata: Whether to include metadata
+
+        Returns:
+            Result dict in same format as rule-based routing
+        """
+        logger.info("Using smart LLM-based routing")
+
+        smart_result = self.smart_router.route(query)
+
+        # Convert to standard result format
+        result = {
+            "success": smart_result.success,
+            "answer": smart_result.answer,
+            "sources": smart_result.sources,
+            "query": smart_result.queries[0] if smart_result.queries else None,
+            "intent": "smart",
+        }
+
+        if return_metadata:
+            result["metadata"] = {
+                "routing_mode": "smart",
+                "is_complex": smart_result.metadata.get("is_complex", False),
+                "num_sub_queries": len(smart_result.sub_results),
+                "execution_time": smart_result.execution_time,
+                "sub_queries": [
+                    {
+                        "text": sr.sub_query.text,
+                        "intent": sr.sub_query.intent.value,
+                        "success": sr.success,
+                    }
+                    for sr in smart_result.sub_results
+                ],
+                "all_queries": smart_result.queries,
+            }
 
         return result
 

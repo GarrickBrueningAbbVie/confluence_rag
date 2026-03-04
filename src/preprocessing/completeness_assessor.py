@@ -189,13 +189,16 @@ class CompletenessAssessor:
     - completeness_score: 0-100 numeric score
     - completeness_summary: Text description of assessment
 
-    Only main project pages are assessed; subpages receive NaN scores.
+    Main project pages are assessed using aggregated content from ALL pages
+    within the project (main page + all subpages). Subpages receive NaN scores.
 
     Attributes:
         iliad_client: Optional Iliad client for enhanced LLM analysis
         template: List of CharterSection definitions
         min_depth: Minimum page depth to be considered a main project
         max_depth: Maximum page depth to be considered a main project
+        _pages_by_id: Internal index for quick page lookup
+        _pages_by_parent_project: Internal index for project grouping
 
     Example:
         >>> assessor = CompletenessAssessor()
@@ -225,6 +228,8 @@ class CompletenessAssessor:
         self.template = template or PROJECT_CHARTER_TEMPLATE
         self.min_depth = min_depth
         self.max_depth = max_depth
+        self._pages_by_id: Dict[str, Dict[str, Any]] = {}
+        self._pages_by_parent_project: Dict[str, List[Dict[str, Any]]] = {}
 
         if iliad_client:
             self.analyzer = DocumentAnalyzer(iliad_client)
@@ -255,6 +260,113 @@ class CompletenessAssessor:
             ancestors = page_data.get("ancestors", [])
             depth = len(ancestors) + 1
         return depth
+
+    def _build_page_index(self, pages: List[Dict[str, Any]]) -> None:
+        """Build internal indexes for efficient page lookup.
+
+        Creates:
+        - _pages_by_id: Quick lookup by page ID
+        - _pages_by_parent_project: Group pages by their parent project
+
+        Args:
+            pages: List of all page dictionaries
+        """
+        self._pages_by_id = {}
+        self._pages_by_parent_project = {}
+
+        for page in pages:
+            page_id = page.get("id")
+            if page_id:
+                self._pages_by_id[page_id] = page
+
+            parent_project = page.get("parent_project")
+            if parent_project:
+                if parent_project not in self._pages_by_parent_project:
+                    self._pages_by_parent_project[parent_project] = []
+                self._pages_by_parent_project[parent_project].append(page)
+
+        logger.debug(
+            f"Built page index: {len(self._pages_by_id)} pages, "
+            f"{len(self._pages_by_parent_project)} projects"
+        )
+
+    def get_project_pages(
+        self,
+        main_page: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Get all pages belonging to a project (main page + all subpages).
+
+        Collects pages by:
+        1. Finding all pages with matching parent_project
+        2. Recursively collecting children of the main page
+
+        Args:
+            main_page: The main project page
+
+        Returns:
+            List of all pages in the project (including main page)
+        """
+        project_pages = []
+        title = main_page.get("title", "")
+        page_id = main_page.get("id")
+
+        # Method 1: Get all pages with this as parent_project
+        if title in self._pages_by_parent_project:
+            project_pages.extend(self._pages_by_parent_project[title])
+
+        # Method 2: Recursively collect children
+        collected_ids = {p.get("id") for p in project_pages}
+
+        def collect_children(page: Dict[str, Any]) -> None:
+            children = page.get("children", [])
+            for child_ref in children:
+                child_id = child_ref.get("id")
+                if child_id and child_id not in collected_ids:
+                    child_page = self._pages_by_id.get(child_id)
+                    if child_page:
+                        project_pages.append(child_page)
+                        collected_ids.add(child_id)
+                        collect_children(child_page)
+
+        collect_children(main_page)
+
+        # Ensure main page is included
+        if page_id not in collected_ids:
+            project_pages.insert(0, main_page)
+
+        return project_pages
+
+    def aggregate_project_content(
+        self,
+        project_pages: List[Dict[str, Any]],
+    ) -> Tuple[str, int]:
+        """Aggregate content from all pages in a project.
+
+        Combines title, content_text, and attachment_content from all pages.
+
+        Args:
+            project_pages: List of pages in the project
+
+        Returns:
+            Tuple of (aggregated_content, page_count)
+        """
+        content_parts = []
+
+        for page in project_pages:
+            title = page.get("title", "")
+            content_text = page.get("content_text", "") or ""
+            attachment_content = page.get("attachment_content", "") or ""
+
+            # Add page content with title as header
+            if title:
+                content_parts.append(f"=== {title} ===")
+            if content_text.strip():
+                content_parts.append(content_text)
+            if attachment_content.strip():
+                content_parts.append(attachment_content)
+
+        aggregated = "\n\n".join(content_parts)
+        return aggregated.lower(), len(project_pages)
 
     def is_main_project_page(
         self,
@@ -353,12 +465,18 @@ class CompletenessAssessor:
     def calculate_completeness(
         self,
         page_data: Dict[str, Any],
+        use_aggregated: bool = True,
     ) -> Tuple[Optional[float], str]:
         """
         Calculate completeness score and generate summary.
 
+        When use_aggregated=True (default), aggregates content from ALL pages
+        within the project (main page + all subpages) for a more accurate
+        completeness assessment.
+
         Args:
             page_data: Page dictionary with content
+            use_aggregated: If True, aggregate content from all project pages
 
         Returns:
             Tuple of (score 0-100 or None, summary text)
@@ -373,13 +491,17 @@ class CompletenessAssessor:
         if not self.is_main_project_page(page_data):
             return None, "N/A - Subpage or non-project page"
 
-        # Combine all content for analysis
-        content_text = page_data.get("content_text", "") or ""
-        attachment_content = page_data.get("attachment_content", "") or ""
-        title = page_data.get("title", "")
-
-        # Combine and lowercase for matching
-        full_content = f"{title}\n{content_text}\n{attachment_content}".lower()
+        # Get content - either aggregated from all project pages or just this page
+        if use_aggregated and self._pages_by_id:
+            project_pages = self.get_project_pages(page_data)
+            full_content, page_count = self.aggregate_project_content(project_pages)
+        else:
+            # Fallback: use only this page's content
+            content_text = page_data.get("content_text", "") or ""
+            attachment_content = page_data.get("attachment_content", "") or ""
+            title = page_data.get("title", "")
+            full_content = f"{title}\n{content_text}\n{attachment_content}".lower()
+            page_count = 1
 
         if not full_content.strip():
             return 0.0, "No content found"
@@ -404,8 +526,11 @@ class CompletenessAssessor:
         # Convert to 0-100 scale
         completeness_score = round(total_score * 100, 1)
 
-        # Generate summary
+        # Generate summary with page count
         summary_parts = [f"Score: {completeness_score}/100"]
+
+        if page_count > 1:
+            summary_parts.append(f"Based on {page_count} pages")
 
         if sections_present:
             present_str = ", ".join(sections_present[:4])
@@ -426,50 +551,154 @@ class CompletenessAssessor:
     def calculate_completeness_llm(
         self,
         page_data: Dict[str, Any],
-    ) -> Tuple[Optional[float], str]:
+        use_aggregated: bool = True,
+    ) -> Tuple[Optional[float], str, int]:
         """
         Calculate completeness using LLM for more accurate assessment.
+
+        Uses a prompt that mirrors the keyword-based heuristic with weighted sections.
+        Aggregates content from all pages within the project when use_aggregated=True.
 
         Requires iliad_client to be configured.
 
         Args:
             page_data: Page dictionary with content
+            use_aggregated: If True, aggregate content from all project pages
 
         Returns:
-            Tuple of (score 0-100 or None, summary text)
+            Tuple of (score 0-100 or None, summary text, page_count)
         """
-        if not self.analyzer:
+        if not self.iliad_client:
             logger.warning("LLM assessment requires iliad_client, falling back to keyword-based")
-            return self.calculate_completeness(page_data)
+            score, summary = self.calculate_completeness(page_data, use_aggregated)
+            page_count = len(self.get_project_pages(page_data)) if use_aggregated else 1
+            return score, summary, page_count
 
         if not self.is_main_project_page(page_data):
-            return None, "N/A - Subpage or non-project page"
+            return None, "N/A - Subpage or non-project page", 0
 
-        content_text = page_data.get("content_text", "") or ""
-        title = page_data.get("title", "")
+        # Get content - either aggregated or single page
+        if use_aggregated and self._pages_by_id:
+            project_pages = self.get_project_pages(page_data)
+            full_content, page_count = self.aggregate_project_content(project_pages)
+        else:
+            content_text = page_data.get("content_text", "") or ""
+            attachment_content = page_data.get("attachment_content", "") or ""
+            title = page_data.get("title", "")
+            full_content = f"{title}\n{content_text}\n{attachment_content}"
+            page_count = 1
 
-        section_names = [s.name for s in self.template]
+        if not full_content.strip():
+            return 0.0, "No content found", page_count
+
+        # Build the weighted sections description for the prompt
+        sections_with_weights = []
+        for section in self.template:
+            weight_pct = int(section.weight * 100)
+            required_kw = ", ".join(section.required_keywords[:5])
+            optional_kw = ", ".join(section.optional_keywords[:3])
+            sections_with_weights.append(
+                f"- **{section.name}** (Weight: {weight_pct}%)\n"
+                f"  Required concepts: {required_kw}\n"
+                f"  Optional concepts: {optional_kw}"
+            )
+
+        sections_text = "\n".join(sections_with_weights)
+
+        prompt = f"""You are assessing a project documentation page for completeness against a standard project charter template.
+
+## Scoring Formula
+For each section:
+1. Calculate required_ratio = (required concepts found) / (total required concepts)
+2. Calculate optional_ratio = (optional concepts found) / (total optional concepts)
+3. section_score = (required_ratio × 0.70) + (optional_ratio × 0.30)
+4. weighted_score = section_score × section_weight
+
+Final Score = sum of all weighted_scores × 100 (scale 0-100)
+
+## Sections to Evaluate
+{sections_text}
+
+## Instructions
+1. Analyze the content for each section
+2. Determine what percentage of required/optional concepts are adequately covered
+3. Calculate the final weighted score using the formula above
+4. A section is "present" if at least 2 required concepts are found
+
+Return ONLY a JSON object with this exact format:
+{{
+  "score": <number 0-100>,
+  "present": ["list of section names that are present"],
+  "missing": ["list of section names that are missing or inadequate"],
+  "summary": "<brief summary of assessment>"
+}}
+
+## Content to Assess (from {page_count} page(s)):
+{full_content[:12000]}"""
 
         try:
-            result = self.analyzer.assess_completeness(content_text, section_names)
-            score = result.get("score", 0)
-            summary = result.get("summary", "Assessment completed")
-            return float(score), summary
+            from iliad.client import IliadModel
+
+            messages = [{"role": "user", "content": prompt}]
+            response = self.iliad_client.chat(messages, model=IliadModel.GPT4O_MINI)
+            response_text = self.iliad_client.extract_content(response)
+
+            # Parse JSON response
+            response_text = response_text.strip()
+            if response_text.startswith("```"):
+                response_text = response_text.split("```")[1]
+                if response_text.startswith("json"):
+                    response_text = response_text[4:]
+                response_text = response_text.strip()
+
+            result = json.loads(response_text)
+
+            score = float(result.get("score", 0))
+            present = result.get("present", [])
+            missing = result.get("missing", [])
+            llm_summary = result.get("summary", "")
+
+            # Build summary with page count
+            summary_parts = [f"Score: {score:.1f}/100"]
+            if page_count > 1:
+                summary_parts.append(f"Based on {page_count} pages")
+            if present:
+                present_str = ", ".join(present[:4])
+                if len(present) > 4:
+                    present_str += f" (+{len(present) - 4} more)"
+                summary_parts.append(f"Present: {present_str}")
+            if missing:
+                missing_str = ", ".join(missing[:3])
+                if len(missing) > 3:
+                    missing_str += f" (+{len(missing) - 3} more)"
+                summary_parts.append(f"Missing: {missing_str}")
+
+            summary = ". ".join(summary_parts)
+
+            return score, summary, page_count
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse LLM completeness JSON: {e}, falling back to keyword-based")
+            score, summary = self.calculate_completeness(page_data, use_aggregated)
+            return score, summary, page_count
         except Exception as e:
             logger.error(f"LLM completeness assessment failed: {e}")
-            return self.calculate_completeness(page_data)
+            score, summary = self.calculate_completeness(page_data, use_aggregated)
+            return score, summary, page_count
 
     def process_page(
         self,
         page_data: Dict[str, Any],
-        use_llm: bool = False,
+        use_llm: bool = True,
+        use_aggregated: bool = True,
     ) -> Dict[str, Any]:
         """
         Process a single page and add completeness data.
 
         Args:
             page_data: Page dictionary to process
-            use_llm: Whether to use LLM-based assessment
+            use_llm: Whether to use LLM-based assessment (default: True)
+            use_aggregated: If True, aggregate content from all project pages
 
         Returns:
             Updated page dictionary with completeness fields
@@ -479,27 +708,41 @@ class CompletenessAssessor:
             >>> print(page["completeness_score"])
         """
         if use_llm and self.iliad_client:
-            score, summary = self.calculate_completeness_llm(page_data)
+            score, summary, pages_assessed = self.calculate_completeness_llm(
+                page_data, use_aggregated=use_aggregated
+            )
         else:
-            score, summary = self.calculate_completeness(page_data)
+            score, summary = self.calculate_completeness(page_data, use_aggregated=use_aggregated)
+            # Get page count if aggregated
+            if use_aggregated and self._pages_by_id and self.is_main_project_page(page_data):
+                pages_assessed = len(self.get_project_pages(page_data))
+            else:
+                pages_assessed = 1
 
         # Handle NaN (None) score properly for JSON serialization
         page_data["completeness_score"] = score if score is not None else float("nan")
         page_data["completeness_summary"] = summary
+        page_data["completeness_pages_assessed"] = pages_assessed if score is not None else 0
 
         return page_data
 
     def process_pages(
         self,
         pages: List[Dict[str, Any]],
-        use_llm: bool = False,
+        use_llm: bool = True,
+        use_aggregated: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Process all pages and add completeness data.
 
+        When use_aggregated=True (default), each main project page's score
+        is calculated using content from ALL pages within that project
+        (main page + all subpages).
+
         Args:
             pages: List of page dictionaries
-            use_llm: Whether to use LLM-based assessment
+            use_llm: Whether to use LLM-based assessment (default: True)
+            use_aggregated: If True, aggregate content from all project pages
 
         Returns:
             Updated pages with completeness_score and completeness_summary
@@ -509,6 +752,10 @@ class CompletenessAssessor:
             >>> scored = [p for p in pages if p['completeness_score'] is not None]
         """
         logger.info(f"Assessing completeness for {len(pages)} pages")
+
+        # Build page index for efficient lookup and aggregation
+        self._build_page_index(pages)
+        logger.info(f"Built index: {len(self._pages_by_parent_project)} unique projects")
 
         # First pass: identify main project pages
         main_pages = []
@@ -521,6 +768,12 @@ class CompletenessAssessor:
                 sub_pages.append(page)
 
         logger.info(f"Found {len(main_pages)} main project pages to assess")
+        if use_aggregated:
+            logger.info("Using aggregated content from all project pages for scoring")
+        if use_llm and self.iliad_client:
+            logger.info("Using LLM-based assessment")
+        else:
+            logger.info("Using keyword-based assessment")
 
         # Process main project pages
         for i, page in enumerate(main_pages):
@@ -528,17 +781,32 @@ class CompletenessAssessor:
                 logger.info(f"Assessing page {i + 1}/{len(main_pages)}")
 
             try:
-                self.process_page(page, use_llm=use_llm)
+                if use_llm and self.iliad_client:
+                    score, summary, pages_assessed = self.calculate_completeness_llm(
+                        page, use_aggregated=use_aggregated
+                    )
+                else:
+                    score, summary = self.calculate_completeness(page, use_aggregated=use_aggregated)
+                    if use_aggregated and self._pages_by_id:
+                        pages_assessed = len(self.get_project_pages(page))
+                    else:
+                        pages_assessed = 1
+
+                page["completeness_score"] = score if score is not None else float("nan")
+                page["completeness_summary"] = summary
+                page["completeness_pages_assessed"] = pages_assessed if score is not None else 0
             except Exception as e:
                 title = page.get("title", "unknown")
                 logger.error(f"Failed to assess '{title}': {e}")
                 page["completeness_score"] = float("nan")
                 page["completeness_summary"] = f"Assessment failed: {str(e)}"
+                page["completeness_pages_assessed"] = 0
 
         # Set subpages to NaN
         for page in sub_pages:
             page["completeness_score"] = float("nan")
             page["completeness_summary"] = "N/A - Subpage"
+            page["completeness_pages_assessed"] = 0
 
         # Log summary
         scored_pages = [p for p in pages if not math.isnan(p.get("completeness_score", float("nan")))]
@@ -548,6 +816,11 @@ class CompletenessAssessor:
             logger.info(f"  - {len(scored_pages)} main project pages assessed")
             logger.info(f"  - Average score: {avg_score:.1f}/100")
             logger.info(f"  - {len(sub_pages)} subpages marked N/A")
+            if use_aggregated:
+                total_pages_in_projects = sum(
+                    len(self.get_project_pages(p)) for p in scored_pages
+                )
+                logger.info(f"  - Total pages included in assessments: {total_pages_in_projects}")
         else:
             logger.warning("No main project pages found for assessment")
 

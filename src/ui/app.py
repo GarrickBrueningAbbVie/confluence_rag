@@ -349,6 +349,62 @@ def get_intent_badge(intent: str) -> str:
     return f'<span class="intent-badge {css_class}">{label}</span>'
 
 
+def display_answer_as_table(answer: Any) -> bool:
+    """
+    Try to display answer as a table if it's tabular data.
+
+    Args:
+        answer: The answer data to display
+
+    Returns:
+        True if displayed as table, False otherwise
+    """
+    import pandas as pd
+
+    try:
+        # List of dicts -> table
+        if isinstance(answer, list) and len(answer) > 0 and isinstance(answer[0], dict):
+            df = pd.DataFrame(answer)
+            row_count = len(df)
+
+            if row_count > 10:
+                # Scrollable table for large datasets
+                st.dataframe(df, use_container_width=True, height=400)
+            else:
+                # Regular table for small datasets
+                st.dataframe(df, use_container_width=True)
+
+            st.caption(f"Showing {row_count} results")
+            return True
+
+        # Dict with consistent structure -> table
+        if isinstance(answer, dict) and len(answer) > 0:
+            # Check if it's a key-value mapping (like counts)
+            values = list(answer.values())
+
+            # If values are simple types, show as key-value table
+            if all(isinstance(v, (int, float, str, bool, type(None))) for v in values):
+                df = pd.DataFrame(
+                    list(answer.items()),
+                    columns=["Key", "Value"]
+                )
+                row_count = len(df)
+
+                if row_count > 10:
+                    st.dataframe(df, use_container_width=True, height=400)
+                else:
+                    st.dataframe(df, use_container_width=True)
+
+                st.caption(f"Showing {row_count} results")
+                return True
+
+        return False
+
+    except Exception as e:
+        logger.debug(f"Could not display as table: {e}")
+        return False
+
+
 def display_answer(result: Dict[str, Any], show_routing: bool = False) -> None:
     """
     Display the answer and sources in formatted sections.
@@ -371,68 +427,188 @@ def display_answer(result: Dict[str, Any], show_routing: bool = False) -> None:
     # Debug: Log the answer type and value
     logger.debug(f"Answer type: {type(answer)}, value: {answer}")
 
-    # If answer is a dict (from Iliad API), extract the content
-    if answer is None:
-        answer_text = ""
-    elif isinstance(answer, dict):
-        if "completion" in answer and isinstance(answer["completion"], dict):
-            answer_text = answer["completion"].get("content", "")
+    # Check if answer is tabular data (from database queries)
+    # Try to display as table first
+    if isinstance(answer, (list, dict)) and not isinstance(answer, str):
+        # Skip if it's an Iliad API response dict (has 'completion' or 'content' key)
+        is_api_response = (
+            isinstance(answer, dict) and
+            ("completion" in answer or "content" in answer)
+        )
+
+        if not is_api_response and display_answer_as_table(answer):
+            # Successfully displayed as table
+            pass
+        elif is_api_response:
+            # Extract text from API response
+            if "completion" in answer and isinstance(answer["completion"], dict):
+                answer_text = answer["completion"].get("content", "")
+            else:
+                answer_text = answer.get("content", str(answer))
+
+            if answer_text and answer_text.strip():
+                st.markdown(answer_text)
         else:
-            answer_text = answer.get("content", str(answer))
+            # Fallback to JSON display
+            st.json(answer)
+    elif answer is None:
+        st.warning("No answer received.")
+    elif isinstance(answer, (int, float)):
+        # Scalar numeric answer
+        st.markdown(f"**{answer}**")
     else:
+        # String or other type
         answer_text = str(answer)
+        if answer_text and answer_text.strip() and answer_text != "None":
+            st.markdown(answer_text)
+        else:
+            st.warning(f"No answer content received.")
 
-    # Display the extracted answer text
-    if answer_text and answer_text.strip() and answer_text != "None":
-        st.markdown(answer_text)
-    else:
-        # Show what we got for debugging
-        st.warning(f"No answer content received. Raw answer: {repr(answer)}")
-
-    # Display sources
+    # Display sources (deduplicated by URL, showing which documents reference each)
     if result.get("sources"):
         st.markdown("### Sources")
-        for i, source in enumerate(result["sources"], 1):
-            with st.expander(f"📄 {source.get('title', f'Source {i}')}"):
-                if source.get("type"):
-                    st.markdown(f"**Type:** {source['type']}")
-                if source.get("url"):
-                    st.markdown(f"**Link:** [{source['url']}]({source['url']})")
 
-    # Display relevance scores in sidebar
+        sources = result["sources"]
+        logger.debug(f"Displaying {len(sources)} sources")
+
+        # Group sources by URL to deduplicate (same page can have multiple chunks)
+        unique_sources = {}
+        for i, source in enumerate(sources, 1):
+            doc_idx = source.get("document_index", i)
+            url = source.get("url", "")
+            title = source.get("title", "Unknown")
+
+            if url not in unique_sources:
+                unique_sources[url] = {
+                    "title": title,
+                    "url": url,
+                    "type": source.get("type", ""),
+                    "document_indices": [],
+                }
+            unique_sources[url]["document_indices"].append(doc_idx)
+
+        # Display unique sources with document reference info
+        for idx, (url, source_info) in enumerate(unique_sources.items(), 1):
+            title = source_info["title"]
+            doc_indices = source_info["document_indices"]
+
+            # Show which document numbers reference this source
+            if len(doc_indices) == 1:
+                doc_ref = f"(Document {doc_indices[0]})"
+            else:
+                doc_ref = f"(Documents {', '.join(map(str, doc_indices))})"
+
+            expander_label = f"📄 {idx}. {title} {doc_ref}"
+
+            with st.expander(expander_label):
+                if source_info.get("type"):
+                    st.markdown(f"**Type:** {source_info['type']}")
+                if source_info.get("url"):
+                    st.markdown(f"**Link:** [{source_info['url']}]({source_info['url']})")
+                if len(doc_indices) > 1:
+                    st.markdown(f"**Note:** This page appears in {len(doc_indices)} retrieved chunks")
+
+    # Display relevance scores in sidebar (grouped by unique source)
     with st.sidebar:
-        if result.get("distances"):
+        if result.get("distances") and result.get("sources"):
             st.markdown("### Relevance Scores")
-            for i, distance in enumerate(result["distances"], 1):
-                score = 1 - distance  # Convert distance to similarity
-                st.progress(score, text=f"Document {i}: {score:.2%}")
+
+            # Group distances by URL (same as sources display)
+            sources = result["sources"]
+            distances = result["distances"]
+            url_scores = {}
+
+            for i, (source, distance) in enumerate(zip(sources, distances)):
+                url = source.get("url", f"source_{i}")
+                title = source.get("title", "Unknown")
+                score = 1 - distance
+
+                if url not in url_scores:
+                    url_scores[url] = {"title": title, "best_score": score, "count": 0}
+                url_scores[url]["count"] += 1
+                # Keep best (highest) score for the page
+                if score > url_scores[url]["best_score"]:
+                    url_scores[url]["best_score"] = score
+
+            # Display grouped scores
+            for idx, (url, info) in enumerate(url_scores.items(), 1):
+                title_short = info["title"][:30] + "..." if len(info["title"]) > 30 else info["title"]
+                chunk_info = f" ({info['count']} chunks)" if info["count"] > 1 else ""
+                st.progress(info["best_score"], text=f"{idx}. {title_short}{chunk_info}: {info['best_score']:.1%}")
+
+
+def is_chartable_data(data: Any) -> bool:
+    """Check if data can be visualized as a chart."""
+    if data is None:
+        return False
+
+    # Dict with string keys and numeric values (e.g., counts, aggregations)
+    if isinstance(data, dict):
+        if len(data) == 0:
+            return False
+        # Check if values are numeric
+        values = list(data.values())
+        if all(isinstance(v, (int, float)) for v in values):
+            return True
+        return False
+
+    # List of dicts with consistent structure
+    if isinstance(data, list) and len(data) > 0:
+        if isinstance(data[0], dict) and len(data) <= 50:
+            # Check if has numeric columns
+            keys = set(data[0].keys())
+            for item in data:
+                if isinstance(item, dict):
+                    for v in item.values():
+                        if isinstance(v, (int, float)):
+                            return True
+        return False
+
+    return False
 
 
 def display_chart(result: Dict[str, Any]) -> None:
     """Display chart visualization if available."""
-    if not result.get("metadata", {}).get("requires_visualization"):
+    if not ADVANCED_FEATURES_AVAILABLE:
         return
 
+    # Get chart data from metadata or from the answer itself
     chart_data = result.get("metadata", {}).get("chart_data")
-    if not chart_data:
+    requires_viz = result.get("metadata", {}).get("requires_visualization", False)
+
+    # If no explicit chart data, check if the answer itself is chartable
+    if not chart_data and not requires_viz:
+        answer = result.get("answer")
+        if is_chartable_data(answer):
+            chart_data = answer
+            requires_viz = True
+
+    if not chart_data or not requires_viz:
         return
 
     try:
-        # Try to generate a quick chart
-        if ADVANCED_FEATURES_AVAILABLE:
-            iliad_config = IliadClientConfig.from_env()
-            iliad_client = IliadClient(iliad_config)
-            generator = ChartGenerator(iliad_client)
+        iliad_config = IliadClientConfig.from_env()
+        iliad_client = IliadClient(iliad_config)
+        generator = ChartGenerator(iliad_client)
 
-            chart_result = generator.generate_quick_chart(
-                data=chart_data,
-                chart_type="bar",
-                title="Query Results",
-            )
+        # Determine best chart type based on data
+        chart_type = "bar"
+        if isinstance(chart_data, dict):
+            if len(chart_data) <= 6:
+                chart_type = "pie"
 
-            if chart_result["success"] and chart_result.get("html"):
-                st.markdown("### Visualization")
-                st.components.v1.html(chart_result["html"], height=400)
+        chart_result = generator.generate_quick_chart(
+            data=chart_data,
+            chart_type=chart_type,
+            title="Query Results",
+        )
+
+        if chart_result["success"] and chart_result.get("figure"):
+            st.markdown("### Visualization")
+            # Use native Streamlit Plotly support for better rendering
+            st.plotly_chart(chart_result["figure"], use_container_width=True)
+        elif chart_result.get("error"):
+            logger.warning(f"Chart generation failed: {chart_result['error']}")
 
     except Exception as e:
         logger.warning(f"Failed to generate chart: {e}")
@@ -510,6 +686,12 @@ def main() -> None:
 
         # Settings
         st.markdown("## Settings")
+
+        # Clear cache button for development/debugging
+        if st.button("🔄 Reload Pipelines", help="Clear cached pipelines and reload"):
+            st.cache_resource.clear()
+            st.rerun()
+
         top_k = st.slider(
             "Number of documents to retrieve",
             min_value=1,
@@ -670,6 +852,19 @@ def main() -> None:
 
                     if result.get("metadata"):
                         debug_info["routing_metadata"] = result["metadata"]
+
+                    # Show source structure for debugging
+                    sources = result.get("sources", [])
+                    if sources:
+                        debug_info["sources_sample"] = [
+                            {
+                                "has_document_index": "document_index" in s,
+                                "document_index": s.get("document_index"),
+                                "title": s.get("title", "")[:50],
+                                "keys": list(s.keys()),
+                            }
+                            for s in sources[:5]
+                        ]
 
                     st.json(debug_info)
 

@@ -343,26 +343,27 @@ Please provide a clear, accurate answer based on the context provided."""
         """
         Format source information for response.
 
+        Sources are kept in order matching the documents sent to the LLM
+        (Document 1, Document 2, etc.) without deduplication to ensure
+        the UI sources align with LLM references.
+
         Args:
             metadatas: List of metadata dictionaries.
 
         Returns:
-            List of formatted source dictionaries.
+            List of formatted source dictionaries with document_index.
         """
         sources = []
-        seen_urls = set()
 
-        for meta in metadatas:
-            url = meta.get("url")
-            if url and url not in seen_urls:
-                sources.append(
-                    {
-                        "title": meta.get("title", "Unknown"),
-                        "url": url,
-                        "type": meta.get("source_type", "Unknown"),
-                    }
-                )
-                seen_urls.add(url)
+        for i, meta in enumerate(metadatas, 1):
+            sources.append(
+                {
+                    "document_index": i,
+                    "title": meta.get("title", "Unknown"),
+                    "url": meta.get("url", ""),
+                    "type": meta.get("source_type", "Unknown"),
+                }
+            )
 
         return sources
 

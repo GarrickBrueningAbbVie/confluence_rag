@@ -139,11 +139,27 @@ The DataFrame is named `df` and has the following columns:
 
 {self.schema_info}
 
+## CRITICAL FORMAT RULES (MUST FOLLOW)
+1. Output ONLY a single pandas expression that starts with `df` or `pd`
+2. DO NOT use variable assignments (e.g., `result = df[...]` is WRONG)
+3. DO NOT use semicolons or multiple statements
+4. The query must be executable directly with Python's eval() function
+5. Return results as dictionaries, lists, or scalar values
+
+CORRECT format examples:
+- df.shape[0]
+- df[df['col'] == 'value']['title'].tolist()
+- df.groupby('col').size().to_dict()
+
+WRONG format examples (DO NOT DO THIS):
+- result = df.shape[0]  <-- NO variable assignments!
+- filtered_df = df[df['col'] == 'value']  <-- NO variable assignments!
+- df.shape[0]; df.head()  <-- NO semicolons!
+
 ## Important Notes
 - The 'technologies' column contains lists of strings (e.g., ['Python', 'Airflow'])
 - Use .apply(lambda x: ...) to search within list columns
 - Always handle None/NaN values appropriately
-- Return results as dictionaries, lists, or scalar values (not DataFrames)
 - Use .to_dict('records') to convert DataFrames to list of dicts
 
 ## Examples
@@ -154,10 +170,7 @@ The DataFrame is named `df` and has the following columns:
 
 Question: {question}
 
-Generate ONLY the pandas query code. Do not include any explanation or markdown formatting.
-Output just the Python code that can be executed with eval().
-
-Query:"""
+Output ONLY the pandas expression (starting with df or pd). No variable names, no assignments, no explanations:"""
 
         return prompt
 
@@ -226,6 +239,8 @@ Query:"""
         Returns:
             Extracted query string or None
         """
+        import re
+
         # Clean up response
         query = response.strip()
 
@@ -239,6 +254,23 @@ Query:"""
             query = query[:-3]
 
         query = query.strip()
+
+        # Fix common LLM issues: strip variable assignment from start
+        # Pattern: variable_name = actual_expression
+        assignment_match = re.match(r'^\s*\w+\s*=\s*(.+)$', query, re.DOTALL)
+        if assignment_match:
+            # Extract just the expression part (after the =)
+            extracted = assignment_match.group(1).strip()
+            # Only use it if it still references df
+            if "df" in extracted:
+                logger.info(f"Stripped variable assignment from query: {query[:50]}... -> {extracted[:50]}...")
+                query = extracted
+
+        # Remove any trailing semicolons or extra statements
+        if ';' in query:
+            # Take only the first statement
+            query = query.split(';')[0].strip()
+            logger.info(f"Stripped multi-statement query to first expression")
 
         # Basic validation
         if not query:

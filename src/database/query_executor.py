@@ -35,22 +35,37 @@ class QueryExecutor:
 
     # Allowed modules/functions in execution context
     ALLOWED_BUILTINS = {
-        "len": len,
+        # Type constructors
         "str": str,
         "int": int,
         "float": float,
+        "bool": bool,
         "list": list,
         "dict": dict,
         "set": set,
+        "tuple": tuple,
+        # Iteration/aggregation
+        "len": len,
         "sorted": sorted,
+        "reversed": reversed,
+        "enumerate": enumerate,
+        "zip": zip,
+        "map": map,
+        "filter": filter,
+        "range": range,
+        # Aggregation functions
         "sum": sum,
         "min": min,
         "max": max,
         "abs": abs,
         "round": round,
-        "enumerate": enumerate,
-        "zip": zip,
+        # Boolean functions (commonly used in pandas apply/lambda)
+        "any": any,
+        "all": all,
+        # Type checking
         "isinstance": isinstance,
+        "type": type,
+        # Constants
         "True": True,
         "False": False,
         "None": None,
@@ -179,6 +194,19 @@ class QueryExecutor:
         for pattern, message in dangerous_patterns:
             if pattern in query:
                 issues.append(message)
+
+        # Check for variable assignments (eval can't handle statements)
+        # Look for '=' that's not part of '==', '!=', '<=', '>=', '='
+        import re
+        # Match '=' not preceded by <, >, !, = and not followed by =
+        if re.search(r'(?<![<>=!])=(?!=)', query):
+            # Could be assignment - check if it's at the start of a "word = " pattern
+            if re.search(r'^\s*\w+\s*=', query) or re.search(r';\s*\w+\s*=', query):
+                issues.append("Variable assignments not allowed (use single expression)")
+
+        # Check for multi-line/multi-statement code
+        if ';' in query:
+            issues.append("Multi-statement queries not allowed (use single expression)")
 
         # Check query references df
         if "df" not in query:

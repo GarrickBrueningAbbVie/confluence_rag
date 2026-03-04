@@ -20,7 +20,9 @@ This project provides an intelligent question-answering system that:
 - **Database Pipeline**: Supports structured queries (counts, filters, aggregations) using pandas
 - **Query Routing**: Automatically routes queries to RAG, Database, or Hybrid pipelines based on intent
 - **RAG Pipeline**: Combines retrieval with Iliad API for accurate answer generation
-- **Visualization**: Generate charts from query results using Plotly
+- **Visualization**: Generate charts from query results using Plotly with native Streamlit integration
+- **Smart Display**: Automatic table formatting for JSON/list results with scrolling support
+- **Source Deduplication**: Intelligent grouping of sources by URL with document reference tracking
 - **Modern UI**: Streamlit-based interface with AbbVie styling and pipeline mode selection
 - **Extensible Architecture**: Well-structured, typed Python code following best practices
 - **Advanced Query Processing**: NLTK-powered keyword extraction and lemmatization
@@ -193,8 +195,11 @@ The app will be available at `http://localhost:8501`
 **UI Features:**
 - **Query Mode Selection**: Choose between Auto, RAG, Database, or Hybrid modes
 - **Query Analysis**: See how your query was routed and what pandas query was generated
-- **Source Documents**: View relevant documents used to generate the answer
-- **Relevance Scores**: See similarity scores for retrieved documents
+- **Source Documents**: View deduplicated sources with document reference mapping
+- **Relevance Scores**: See similarity scores grouped by unique source page
+- **Smart Tables**: JSON/list answers automatically displayed as scrollable tables
+- **Chart Visualization**: Automatic chart generation for numeric data using Plotly
+- **Cache Control**: Reload Pipelines button to clear cached components
 
 ### Query Types
 
@@ -324,6 +329,7 @@ print(result['query'])   # Generated pandas query
 | `QueryRouter` | Intelligent query routing based on intent |
 | `RAGPipeline` | Semantic search and answer generation |
 | `ChartGenerator` | Visualization generation using Plotly |
+| `display_answer` | Smart answer display with tables, charts, source deduplication |
 
 ## Development
 
@@ -385,6 +391,24 @@ pip install -r requirements.txt
 # Ensure ENABLE_DATABASE_PIPELINE=true in .env
 # Ensure confluence_pages_processed.json exists
 python -m src.data_pipeline --preprocess-only
+```
+
+**Issue**: Sources appear duplicated
+- This is expected behavior - documents are chunked, and multiple chunks from the same page may be relevant
+- The UI now deduplicates sources by URL and shows which document numbers reference each source
+- Example: "📄 1. Page Title (Documents 1, 2, 4)" indicates chunks 1, 2, 4 are from the same page
+
+**Issue**: Charts not displaying
+```bash
+# Ensure Plotly is installed
+pip install plotly
+# Charts use st.plotly_chart() for native Streamlit integration
+```
+
+**Issue**: Streamlit showing stale results
+```bash
+# Click "🔄 Reload Pipelines" button in sidebar to clear cache
+# Or restart the Streamlit app
 ```
 
 ## Security
