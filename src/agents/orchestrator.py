@@ -31,8 +31,34 @@ from agents.feedback_controller import FeedbackController
 # Type hints for optional imports
 try:
     from iliad.client import IliadClient
+    from agents.iterative_agent import IterativeDescribeAgent
 except ImportError:
     pass
+
+
+# Patterns for detecting list+describe queries
+LIST_DESCRIBE_PATTERNS = [
+    "list all",
+    "list the",
+    "what projects",
+    "which projects",
+    "show all",
+    "get all",
+    "find all",
+]
+
+DESCRIBE_PATTERNS = [
+    "describe all",
+    "describe each",
+    "describe these",
+    "describe them",
+    "explain all",
+    "explain each",
+    "and describe",
+    "and explain",
+    "then describe",
+    "then explain",
+]
 
 
 @dataclass
@@ -239,6 +265,11 @@ No explanations, only JSON."""
         )
 
         try:
+            # Check for list+describe pattern first (highest priority)
+            if not force_plan and self._is_list_describe_query(query):
+                logger.info("Detected list+describe pattern, using IterativeDescribeAgent")
+                return self._execute_iterative_describe(query, context, start_time)
+
             # Step 1: Create execution plan
             if force_plan:
                 plan = force_plan
@@ -727,3 +758,121 @@ Your synthesized answer:"""
             List of agent names
         """
         return list(self.agents.keys())
+
+    def _is_list_describe_query(self, query: str) -> bool:
+        """Check if query matches list+describe pattern.
+
+        These queries need the IterativeDescribeAgent to first get a list
+        from the database, then describe each item via RAG.
+
+        Args:
+            query: User query to check
+
+        Returns:
+            True if this is a list+describe pattern
+        """
+        query_lower = query.lower()
+
+        # Check for both list AND describe keywords
+        has_list = any(pattern in query_lower for pattern in LIST_DESCRIBE_PATTERNS)
+        has_describe = any(pattern in query_lower for pattern in DESCRIBE_PATTERNS)
+
+        if has_list and has_describe:
+            logger.debug(f"Matched list+describe pattern: list={has_list}, describe={has_describe}")
+            return True
+
+        return False
+
+    def _execute_iterative_describe(
+        self,
+        query: str,
+        context: AgentContext,
+        start_time: float,
+    ) -> OrchestrationResult:
+        """Execute query using IterativeDescribeAgent.
+
+        Creates an IterativeDescribeAgent dynamically with the RAG and
+        Database agents, then executes the list+describe query.
+
+        Args:
+            query: User query
+            context: Execution context
+            start_time: Start time for timing
+
+        Returns:
+            OrchestrationResult with combined descriptions
+        """
+        # Get RAG and Database agents
+        rag_agent = self.agents.get("rag_agent")
+        db_agent = self.agents.get("database_agent")
+
+        if not rag_agent or not db_agent:
+            logger.warning("Missing rag_agent or database_agent for iterative describe")
+            # Fallback to normal execution
+            plan = self._score_based_plan(query, context)
+            results = self._execute_plan(plan, context)
+            final_answer = self._synthesize_results(query, results, context)
+            return OrchestrationResult(
+                success=True,
+                final_answer=final_answer,
+                steps_executed=results,
+                context=context,
+                execution_time=time.time() - start_time,
+            )
+
+        # Create IterativeDescribeAgent
+        iterative_agent = IterativeDescribeAgent(
+            rag_agent=rag_agent,
+            db_agent=db_agent,
+            iliad_client=self.iliad_client,
+            max_items_to_describe=10,
+        )
+
+        # Execute iterative query
+        result = iterative_agent.execute(query, context)
+
+        execution_time = time.time() - start_time
+
+        if result.success:
+            logger.info(
+                f"IterativeDescribeAgent completed: "
+                f"{result.data.get('items_found', 0)} items found, "
+                f"{result.data.get('items_described', 0)} described"
+            )
+
+            return OrchestrationResult(
+                success=True,
+                final_answer=result.data.get("answer", str(result.data)),
+                steps_executed=[
+                    {
+                        "step_index": 0,
+                        "agent": "iterative_describe_agent",
+                        "query": query,
+                        "result": result,
+                        "stored_as": "iterative_result",
+                    }
+                ],
+                context=context,
+                execution_time=execution_time,
+                metadata={
+                    "pattern": "list_describe",
+                    "items_found": result.data.get("items_found", 0),
+                    "items_described": result.data.get("items_described", 0),
+                    "sources": result.data.get("sources", []),
+                },
+            )
+        else:
+            logger.warning(f"IterativeDescribeAgent failed: {result.reasoning}")
+            # Fallback to normal execution
+            plan = self._score_based_plan(query, context)
+            results = self._execute_plan(plan, context)
+            final_answer = self._synthesize_results(query, results, context)
+
+            return OrchestrationResult(
+                success=bool(final_answer),
+                final_answer=final_answer or "Unable to process query.",
+                steps_executed=results,
+                context=context,
+                execution_time=time.time() - start_time,
+                metadata={"fallback": True, "original_error": result.reasoning},
+            )

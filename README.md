@@ -66,6 +66,7 @@ confluence_rag/
 │   │   ├── rag_agent.py              # RAGAgent for semantic search
 │   │   ├── database_agent.py         # DatabaseAgent for structured queries
 │   │   ├── plotting_agent.py         # PlottingAgent for visualizations
+│   │   ├── iterative_agent.py        # IterativeDescribeAgent for list+describe
 │   │   ├── feedback_controller.py    # Manages feedback loops and refinement
 │   │   └── orchestrator.py           # AgentOrchestrator coordinates agents
 │   ├── prompts/                      # Prompt engineering
@@ -223,6 +224,7 @@ The system supports different types of queries:
 | **Hybrid** | "List projects and explain their purpose" | Both |
 | **Visualization** | "Show me a chart of pages by author" | Database + Chart |
 | **Multi-Step** | "What projects are similar to ALFA?" | Agent Orchestrator |
+| **List+Describe** | "List all projects using XGBoost and describe them" | IterativeDescribeAgent |
 
 ### Programmatic Usage
 
@@ -306,6 +308,10 @@ result = smart_router.route("Describe ALFA and how many pages mention it")
 - "Which authors work on Python projects and how many pages have they created?" - Gets authors first, then counts their pages
 - "Compare the data pipelines of Project A and Project B" - Gets info on both projects, then synthesizes comparison
 
+**List+Describe Query Examples:**
+- "List all projects that use XGBoost and describe all these projects" - Gets complete list from database, then describes each via RAG
+- "Show all pages about machine learning and explain each one" - Ensures all matching items are described, not just top-k
+
 ## Configuration
 
 ### Environment Variables
@@ -373,6 +379,7 @@ result = smart_router.route("Describe ALFA and how many pages mention it")
 | `AgentOrchestrator` | Coordinates multi-agent execution for complex queries |
 | `RAGAgent` | Agent wrapper for semantic search |
 | `DatabaseAgent` | Agent wrapper for structured queries |
+| `IterativeDescribeAgent` | Handles list+describe queries comprehensively |
 | `FeedbackController` | Manages query refinement and feedback loops |
 
 ## Development

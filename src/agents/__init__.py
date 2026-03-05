@@ -15,6 +15,7 @@ Available Agents:
     - RAGAgent: Semantic search and document retrieval
     - DatabaseAgent: Structured queries (counts, lists, aggregations)
     - PlottingAgent: Data visualization generation
+    - IterativeDescribeAgent: List-then-describe queries (list from DB, describe each via RAG)
 
 Example:
     >>> from agents import AgentOrchestrator, RAGAgent, DatabaseAgent
@@ -44,6 +45,7 @@ from agents.base import (
 from agents.rag_agent import RAGAgent
 from agents.database_agent import DatabaseAgent
 from agents.plotting_agent import PlottingAgent
+from agents.iterative_agent import IterativeDescribeAgent
 from agents.feedback_controller import FeedbackController, RefinementTrigger
 from agents.orchestrator import (
     AgentOrchestrator,
@@ -61,6 +63,7 @@ __all__ = [
     "RAGAgent",
     "DatabaseAgent",
     "PlottingAgent",
+    "IterativeDescribeAgent",
     # Orchestration
     "AgentOrchestrator",
     "ExecutionStep",
