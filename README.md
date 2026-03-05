@@ -27,6 +27,9 @@ This project provides an intelligent question-answering system that:
 - **Extensible Architecture**: Well-structured, typed Python code following best practices
 - **Advanced Query Processing**: NLTK-powered keyword extraction and lemmatization
 - **Composite Re-ranking**: Multi-signal scoring using page hierarchy, keyword matching, and similarity metrics
+- **Agent Framework**: Modular agent-based architecture for multi-step queries
+- **Multi-Step Queries**: Support for complex queries requiring multiple steps with context passing
+- **Feedback Loops**: Automatic query refinement when results are insufficient
 
 ## Project Structure
 
@@ -56,7 +59,15 @@ confluence_rag/
 │   ├── routing/                      # Query routing
 │   │   ├── intent_classifier.py      # Classify query intent (RAG/DB/Hybrid)
 │   │   ├── query_router.py           # Route queries to pipelines
+│   │   ├── smart_router.py           # LLM-based query decomposition and orchestrator
 │   │   └── response_combiner.py      # Combine multi-pipeline responses
+│   ├── agents/                       # Agent framework for multi-step queries
+│   │   ├── base.py                   # BaseAgent, AgentContext, AgentResult
+│   │   ├── rag_agent.py              # RAGAgent for semantic search
+│   │   ├── database_agent.py         # DatabaseAgent for structured queries
+│   │   ├── plotting_agent.py         # PlottingAgent for visualizations
+│   │   ├── feedback_controller.py    # Manages feedback loops and refinement
+│   │   └── orchestrator.py           # AgentOrchestrator coordinates agents
 │   ├── prompts/                      # Prompt engineering
 │   │   ├── prompt_splitter.py        # Split prompts into question + instructions
 │   │   ├── templates.py              # Centralized prompt templates
@@ -211,6 +222,7 @@ The system supports different types of queries:
 | **Structured** | "How many pages use Python?", "List all projects" | Database |
 | **Hybrid** | "List projects and explain their purpose" | Both |
 | **Visualization** | "Show me a chart of pages by author" | Database + Chart |
+| **Multi-Step** | "What projects are similar to ALFA?" | Agent Orchestrator |
 
 ### Programmatic Usage
 
@@ -265,6 +277,34 @@ print(result['answer'])
 print(result['intent'])  # "database"
 print(result['query'])   # Generated pandas query
 ```
+
+#### Using Multi-Step Queries (Agent Orchestrator)
+
+For complex queries that require multiple steps with context passing:
+
+```python
+from routing.smart_router import SmartQueryRouter
+
+# Initialize smart router
+smart_router = SmartQueryRouter(
+    rag_pipeline=pipeline,
+    db_pipeline=db_pipeline,
+    iliad_client=iliad_client,
+)
+
+# Multi-step query: First summarizes ALFA, then finds similar projects
+result = smart_router.route_multistep("What projects are similar to ALFA?")
+print(result.answer)
+print(result.metadata)  # Shows execution steps and agents used
+
+# Standard smart routing with query decomposition
+result = smart_router.route("Describe ALFA and how many pages mention it")
+```
+
+**Multi-Step Query Examples:**
+- "What projects are similar to ALFA?" - Summarizes ALFA first, then searches for similar projects
+- "Which authors work on Python projects and how many pages have they created?" - Gets authors first, then counts their pages
+- "Compare the data pipelines of Project A and Project B" - Gets info on both projects, then synthesizes comparison
 
 ## Configuration
 
@@ -330,6 +370,10 @@ print(result['query'])   # Generated pandas query
 | `RAGPipeline` | Semantic search and answer generation |
 | `ChartGenerator` | Visualization generation using Plotly |
 | `display_answer` | Smart answer display with tables, charts, source deduplication |
+| `AgentOrchestrator` | Coordinates multi-agent execution for complex queries |
+| `RAGAgent` | Agent wrapper for semantic search |
+| `DatabaseAgent` | Agent wrapper for structured queries |
+| `FeedbackController` | Manages query refinement and feedback loops |
 
 ## Development
 
