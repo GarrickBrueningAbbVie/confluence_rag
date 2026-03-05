@@ -16,6 +16,7 @@ nltk
 
 # UI
 streamlit
+plotly
 
 # Code Quality
 black

@@ -39,3 +39,20 @@ def iliad_call_single_content(
     resp = requests.post(url, json=payload, headers=headers)
 
     return resp
+
+model_list = [
+    "claude-4-sonnet",
+    "claude-4.5-sonnet",
+    "claude-4.5-haiku",
+    "claude-4.5-opus",
+    "gpt-4o",
+    "gpt-4o-global",
+    "gpt-4o-mini",
+    "gpt-4o-mini-global",
+    "gpt-41-global",
+    "gpt-41-nano-global",
+    "gpt-41-mini-global",
+    "gpt-5-chat-global",
+    "gpt-5-mini-global",
+    "gpt-5.2"
+]
