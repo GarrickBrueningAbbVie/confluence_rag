@@ -19,9 +19,11 @@ Example:
     >>> print(updated["parent_project"], updated["technologies"])
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+
+from .parallel import ParallelProcessor
 
 # Import types for type hints
 try:
@@ -321,5 +323,131 @@ class MetadataExtractor:
                 page["technologies"] = sorted(combined)
 
         logger.info(f"Propagated technologies across {len(project_techs)} projects")
+
+        return pages
+
+    # -------------------------------------------------------------------------
+    # Parallel Processing Methods
+    # -------------------------------------------------------------------------
+
+    def _process_page_wrapper(
+        self,
+        args: Tuple[Dict[str, Any], bool],
+    ) -> Tuple[int, Dict[str, Any]]:
+        """Wrapper for parallel page processing.
+
+        Args:
+            args: Tuple of (page_data, extract_technologies)
+
+        Returns:
+            Tuple of (original_index, processed_page_data)
+        """
+        page_data, extract_technologies = args
+        return self.process_page(page_data, extract_technologies=extract_technologies)
+
+    def process_pages_parallel(
+        self,
+        pages: List[Dict[str, Any]],
+        extract_technologies: bool = True,
+        max_workers: int = 8,
+        rate_limit_rps: Optional[float] = 10.0,
+        batch_size: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Process multiple pages in parallel to extract metadata.
+
+        Parallel version of process_pages() that uses a thread pool to
+        extract metadata (especially technologies) from multiple pages
+        concurrently.
+
+        Note: Parent project extraction is fast (no API calls) and is
+        still done sequentially. Technology extraction (which requires
+        LLM calls) is parallelized.
+
+        Args:
+            pages: List of page dictionaries
+            extract_technologies: Whether to extract technologies
+            max_workers: Maximum concurrent processing threads
+            rate_limit_rps: Optional requests per second limit
+            batch_size: Number of pages to process per batch
+
+        Returns:
+            Updated list of page dictionaries with metadata
+
+        Example:
+            >>> pages = extractor.process_pages_parallel(
+            ...     all_pages,
+            ...     max_workers=8,
+            ...     rate_limit_rps=10.0,
+            ...     batch_size=50,
+            ... )
+        """
+        logger.info(
+            f"Extracting metadata from {len(pages)} pages in parallel "
+            f"(workers={max_workers}, rps={rate_limit_rps}, batch={batch_size})"
+        )
+
+        # First pass: Extract parent_project (fast, no API calls)
+        # This can stay sequential since it's just dictionary lookups
+        for page in pages:
+            parent_project = self.extract_parent_project(page)
+            page["parent_project"] = parent_project
+
+        with_project = sum(1 for p in pages if p.get("parent_project"))
+        logger.info(f"Parent project extraction: {with_project}/{len(pages)} pages have projects")
+
+        # Second pass: Extract technologies in parallel (LLM calls)
+        if extract_technologies:
+            # Filter to pages that have content worth analyzing
+            pages_to_analyze = []
+            pages_indices = []
+
+            for i, page in enumerate(pages):
+                content = page.get("content_text", "") or ""
+                attachment_content = page.get("attachment_content", "") or ""
+                full_content = f"{content}\n\n{attachment_content}".strip()
+
+                if full_content and len(full_content) >= 50:
+                    pages_to_analyze.append((page, True))
+                    pages_indices.append(i)
+                else:
+                    page["technologies"] = []
+
+            if pages_to_analyze:
+                logger.info(
+                    f"Extracting technologies from {len(pages_to_analyze)} pages with content"
+                )
+
+                processor = ParallelProcessor(
+                    max_workers=max_workers,
+                    rate_limit_rps=rate_limit_rps,
+                )
+
+                try:
+                    results = processor.map_batched(
+                        self._process_page_wrapper,
+                        pages_to_analyze,
+                        batch_size=batch_size,
+                        desc="Technology extraction",
+                        pause_between_batches=1.0,
+                    )
+
+                    # Update pages with results
+                    for proc_result, idx in zip(results, pages_indices):
+                        if proc_result.success and proc_result.value:
+                            pages[idx] = proc_result.value
+                        else:
+                            pages[idx].setdefault("technologies", [])
+
+                finally:
+                    processor.shutdown()
+        else:
+            for page in pages:
+                page.setdefault("technologies", [])
+
+        # Log summary
+        with_tech = sum(1 for p in pages if p.get("technologies"))
+        logger.info(f"Metadata extraction complete (parallel):")
+        logger.info(f"  - {with_project}/{len(pages)} pages have parent_project")
+        logger.info(f"  - {with_tech}/{len(pages)} pages have technologies")
 
         return pages

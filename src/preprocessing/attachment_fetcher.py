@@ -25,9 +25,11 @@ Example:
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from loguru import logger
+
+from .parallel import ParallelProcessor, ProcessingResult
 
 # Import types for type hints
 try:
@@ -420,3 +422,302 @@ Description (keep under {max_length} characters):"""
         logger.info(f"Batch complete: {successful}/{len(page_ids)} pages had extractable attachments")
 
         return results
+
+    # -------------------------------------------------------------------------
+    # Parallel Processing Methods
+    # -------------------------------------------------------------------------
+
+    def _download_and_process_attachment(
+        self,
+        args: Tuple[Dict[str, Any], str],
+    ) -> Dict[str, Any]:
+        """Download and process a single attachment (for parallel execution).
+
+        Args:
+            args: Tuple of (attachment_metadata, page_id)
+
+        Returns:
+            Processing result dictionary
+        """
+        attachment, page_id = args
+
+        # Download
+        file_path = self.download_attachment(attachment, page_id)
+        if not file_path:
+            return {
+                "filename": attachment.get("title", "unknown"),
+                "file_type": "unknown",
+                "extracted_text": "",
+                "description": "",
+                "success": False,
+                "file_path": None,
+            }
+
+        # Process
+        result = self.process_attachment(file_path)
+        result["file_path"] = file_path
+        return result
+
+    def process_attachments_parallel(
+        self,
+        attachments: List[Dict[str, Any]],
+        page_id: str,
+        max_workers: int = 4,
+        rate_limit_rps: Optional[float] = None,
+        cleanup: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Process multiple attachments in parallel within a single page.
+
+        Downloads and processes attachments concurrently using a thread pool.
+        This is useful when a page has multiple image attachments that each
+        require LLM analysis.
+
+        Args:
+            attachments: List of attachment metadata dictionaries
+            page_id: Confluence page ID for organizing storage
+            max_workers: Maximum concurrent processing threads
+            rate_limit_rps: Optional requests per second limit
+            cleanup: Whether to delete downloaded files after processing
+
+        Returns:
+            List of processing result dictionaries
+
+        Example:
+            >>> attachments = fetcher.fetch_page_attachments("123456")
+            >>> results = fetcher.process_attachments_parallel(attachments, "123456")
+            >>> successful = [r for r in results if r['success']]
+        """
+        if not attachments:
+            return []
+
+        logger.info(
+            f"Processing {len(attachments)} attachments in parallel "
+            f"(workers={max_workers}, rps={rate_limit_rps})"
+        )
+
+        # Prepare arguments for parallel processing
+        args_list = [(att, page_id) for att in attachments]
+
+        # Process in parallel
+        processor = ParallelProcessor(
+            max_workers=max_workers,
+            rate_limit_rps=rate_limit_rps,
+        )
+
+        try:
+            results = processor.map(
+                self._download_and_process_attachment,
+                args_list,
+                desc=f"Attachments for page {page_id}",
+            )
+
+            # Extract results and collect file paths for cleanup
+            output = []
+            downloaded_files = []
+
+            for proc_result in results:
+                if proc_result.success and proc_result.value:
+                    result = proc_result.value
+                    if result.get("file_path"):
+                        downloaded_files.append(result["file_path"])
+                    output.append(result)
+                else:
+                    # Failed processing - create error result
+                    output.append({
+                        "filename": "unknown",
+                        "file_type": "unknown",
+                        "extracted_text": "",
+                        "description": "",
+                        "success": False,
+                        "error": str(proc_result.error) if proc_result.error else "Unknown error",
+                    })
+
+            # Cleanup
+            if cleanup:
+                for file_path in downloaded_files:
+                    try:
+                        if file_path and Path(file_path).exists():
+                            Path(file_path).unlink()
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup {file_path}: {e}")
+
+                # Remove page directory if empty
+                try:
+                    page_dir = self.storage_path / page_id
+                    if page_dir.exists() and not any(page_dir.iterdir()):
+                        page_dir.rmdir()
+                except Exception:
+                    pass
+
+            return output
+
+        finally:
+            processor.shutdown()
+
+    def process_all_page_attachments_parallel(
+        self,
+        page_id: str,
+        max_workers: int = 4,
+        rate_limit_rps: Optional[float] = None,
+        cleanup: bool = True,
+    ) -> str:
+        """Process all attachments for a page in parallel.
+
+        Parallel version of process_all_page_attachments() that processes
+        multiple attachments concurrently.
+
+        Args:
+            page_id: Confluence page ID
+            max_workers: Maximum concurrent processing threads
+            rate_limit_rps: Optional requests per second limit
+            cleanup: Whether to delete downloaded files after processing
+
+        Returns:
+            Combined text content from all attachments
+
+        Example:
+            >>> content = fetcher.process_all_page_attachments_parallel("123456")
+            >>> print(f"Extracted {len(content)} characters")
+        """
+        # Fetch attachment metadata
+        attachments = self.fetch_page_attachments(page_id)
+
+        if not attachments:
+            logger.debug(f"No attachments found for page {page_id}")
+            return ""
+
+        # Process in parallel
+        results = self.process_attachments_parallel(
+            attachments,
+            page_id,
+            max_workers=max_workers,
+            rate_limit_rps=rate_limit_rps,
+            cleanup=cleanup,
+        )
+
+        # Combine results
+        all_content = []
+        for result in results:
+            if result.get("success") and result.get("extracted_text"):
+                header = f"\n\n--- Attachment: {result['filename']} ---\n"
+                if result.get("description"):
+                    header += f"Description: {result['description']}\n"
+                header += "\n"
+                all_content.append(header + result["extracted_text"])
+
+        combined = "\n".join(all_content)
+        logger.info(
+            f"Extracted {len(combined)} chars from {len(all_content)} attachments "
+            f"for page {page_id} (parallel)"
+        )
+
+        return combined
+
+    def _process_page_attachments_wrapper(self, page_id: str) -> Tuple[str, str]:
+        """Wrapper for parallel page processing.
+
+        Args:
+            page_id: Confluence page ID
+
+        Returns:
+            Tuple of (page_id, extracted_content)
+        """
+        try:
+            content = self.process_all_page_attachments_parallel(
+                page_id,
+                max_workers=4,  # Within-page parallelization
+                cleanup=True,
+            )
+            return (page_id, content)
+        except Exception as e:
+            logger.error(f"Failed to process page {page_id}: {e}")
+            return (page_id, "")
+
+    def process_pages_parallel(
+        self,
+        page_ids: List[str],
+        max_workers_pages: int = 8,
+        max_workers_attachments: int = 4,
+        rate_limit_rps: Optional[float] = 10.0,
+        batch_size: int = 50,
+        cleanup: bool = True,
+    ) -> Dict[str, str]:
+        """Process attachments for multiple pages in parallel.
+
+        Two-level parallelization:
+        1. Process multiple pages concurrently (max_workers_pages)
+        2. Within each page, process attachments concurrently (max_workers_attachments)
+
+        Includes batch processing to limit concurrent API load and optional
+        rate limiting for API calls.
+
+        Args:
+            page_ids: List of Confluence page IDs
+            max_workers_pages: Maximum concurrent page processing
+            max_workers_attachments: Maximum concurrent attachments per page
+            rate_limit_rps: Optional requests per second limit
+            batch_size: Number of pages to process per batch (default 50)
+            cleanup: Whether to delete downloaded files after processing
+
+        Returns:
+            Dictionary mapping page IDs to extracted content
+
+        Example:
+            >>> results = fetcher.process_pages_parallel(
+            ...     page_ids[:100],
+            ...     max_workers_pages=8,
+            ...     batch_size=50,
+            ...     rate_limit_rps=10.0,
+            ... )
+            >>> successful = sum(1 for c in results.values() if c)
+        """
+        if not page_ids:
+            return {}
+
+        logger.info(
+            f"Processing {len(page_ids)} pages in parallel "
+            f"(page_workers={max_workers_pages}, att_workers={max_workers_attachments}, "
+            f"batch_size={batch_size}, rps={rate_limit_rps})"
+        )
+
+        # Store attachment worker config for nested processing
+        self._parallel_attachment_workers = max_workers_attachments
+
+        # Create processor for page-level parallelization
+        processor = ParallelProcessor(
+            max_workers=max_workers_pages,
+            rate_limit_rps=rate_limit_rps,
+        )
+
+        try:
+            # Process in batches
+            results = processor.map_batched(
+                self._process_page_attachments_wrapper,
+                page_ids,
+                batch_size=batch_size,
+                desc="Pages",
+                pause_between_batches=2.0,  # Give API time to recover
+            )
+
+            # Convert to dictionary
+            output = {}
+            for proc_result in results:
+                if proc_result.success and proc_result.value:
+                    page_id, content = proc_result.value
+                    output[page_id] = content
+                else:
+                    # Use original item as page_id for failed results
+                    output[proc_result.item] = ""
+
+            successful = sum(1 for c in output.values() if c)
+            logger.info(
+                f"Parallel batch complete: {successful}/{len(page_ids)} pages "
+                f"had extractable attachments"
+            )
+
+            return output
+
+        finally:
+            processor.shutdown()
+            if hasattr(self, "_parallel_attachment_workers"):
+                delattr(self, "_parallel_attachment_workers")
