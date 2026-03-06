@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from loguru import logger
 
-from iliad.client import IliadClient, IliadModel
+from .client import IliadClient, IliadModel
 
 
 class DocumentAnalyzer:

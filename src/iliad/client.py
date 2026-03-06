@@ -11,10 +11,13 @@ Example:
     >>> response = client.chat([{"role": "user", "content": "Hello"}])
 """
 
+import base64
+import mimetypes
 import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, BinaryIO, Dict, List, Optional, Union, Iterator
 
 import requests
@@ -131,6 +134,26 @@ class IliadClient:
         )
         logger.info(f"Initialized IliadClient with base URL: {config.base_url}")
 
+    def _get_base_url_root(self) -> str:
+        """Extract the root API URL from the configured base_url.
+
+        The base_url might be configured as either:
+        - Root URL: https://api.example.com/iliad
+        - Chat endpoint: https://api.example.com/iliad/api/v1/chat/gpt-4o
+
+        This method returns just the root for endpoints that need it.
+        """
+        base = self.config.base_url
+        # Check if base_url contains a specific endpoint path
+        # Common patterns: /api/v1/chat/, /api/v1/
+        if "/api/v1/chat/" in base:
+            # Extract root before /api/v1/chat/
+            return base.split("/api/v1/chat/")[0]
+        elif base.endswith("/api/v1") or "/api/v1/" in base:
+            # Already at api/v1 level, go up one more
+            return base.rsplit("/api/v1", 1)[0]
+        return base
+
     def _make_request(
         self,
         method: str,
@@ -139,6 +162,7 @@ class IliadClient:
         data: Optional[Dict[str, Any]] = None,
         files: Optional[Dict[str, Any]] = None,
         stream: bool = False,
+        use_root_url: bool = False,
     ) -> requests.Response:
         """Make HTTP request with retry logic.
 
@@ -149,6 +173,7 @@ class IliadClient:
             data: Form data
             files: File uploads
             stream: Whether to stream response
+            use_root_url: If True, use root URL instead of full base_url
 
         Returns:
             Response object
@@ -156,7 +181,8 @@ class IliadClient:
         Raises:
             requests.exceptions.RequestException: If all retries fail
         """
-        url = f"{self.config.base_url}{endpoint}"
+        base = self._get_base_url_root() if use_root_url else self.config.base_url
+        url = f"{base}{endpoint}"
         last_exception = None
 
         for attempt in range(self.config.max_retries):
@@ -275,6 +301,7 @@ class IliadClient:
                 "/api/v1/analyze",
                 data=data,
                 files=files_param,
+                use_root_url=True,
             )
 
             return response.json()
@@ -322,10 +349,15 @@ class IliadClient:
                 "/api/v1/recognize",
                 data=data,
                 files=files_param,
+                use_root_url=True,
             )
 
             result = response.json()
-            return result.get("text", "")
+            text = result.get("text", "")
+            # Handle case where API returns text as a list
+            if isinstance(text, list):
+                text = "\n".join(str(item) for item in text)
+            return text
 
         finally:
             if file_handle:
@@ -363,10 +395,15 @@ class IliadClient:
                 "POST",
                 "/api/v1/recognize/ocr",
                 files=files_param,
+                use_root_url=True,
             )
 
             result = response.json()
-            return result.get("text", "")
+            text = result.get("text", "")
+            # Handle case where API returns text as a list
+            if isinstance(text, list):
+                text = "\n".join(str(item) for item in text)
+            return text
 
         finally:
             if file_handle:
@@ -411,6 +448,7 @@ class IliadClient:
                 "/api/v1/recognize/markdown",
                 data=data,
                 files=files_param,
+                use_root_url=True,
             )
 
             result = response.json()
@@ -419,6 +457,103 @@ class IliadClient:
         finally:
             if file_handle:
                 file_handle.close()
+
+    def analyze_image(
+        self,
+        image: Union[str, Path, bytes],
+        prompt: str = "Provide a detailed explanation and summary of this image. Describe what you see, including any text, diagrams, charts, or visual elements.",
+        model: Optional[str] = None,
+    ) -> str:
+        """Analyze an image using multimodal chat endpoint.
+
+        Uses the chat endpoint with image content blocks to get detailed
+        analysis and descriptions of images. This is more powerful than
+        OCR as it can understand and describe visual content, diagrams,
+        charts, and context.
+
+        Supported formats: JPEG, PNG, WebP, GIF
+
+        Args:
+            image: Image file path, Path object, or raw bytes
+            prompt: Instructions for analyzing the image
+            model: Model to use (defaults to gpt-4o for vision capabilities)
+
+        Returns:
+            Detailed analysis/description of the image
+
+        Example:
+            >>> analysis = client.analyze_image("/path/to/diagram.png")
+            >>> print(analysis)
+            "This diagram shows a system architecture with three main components..."
+
+            >>> analysis = client.analyze_image(
+            ...     "/path/to/chart.png",
+            ...     prompt="What trends does this chart show?"
+            ... )
+        """
+        # Default to gpt-4o which has strong vision capabilities
+        model = model or "gpt-4o"
+
+        # Load image and encode to base64
+        if isinstance(image, bytes):
+            image_data = image
+            media_type = "image/png"  # Default for raw bytes
+        elif isinstance(image, (str, Path)):
+            image_path = Path(image)
+            if not image_path.exists():
+                raise FileNotFoundError(f"Image not found: {image}")
+
+            with open(image_path, "rb") as f:
+                image_data = f.read()
+
+            # Determine media type from extension
+            ext = image_path.suffix.lower()
+            media_type_map = {
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".png": "image/png",
+                ".webp": "image/webp",
+                ".gif": "image/gif",
+            }
+            media_type = media_type_map.get(ext, "image/png")
+        else:
+            raise TypeError(f"Invalid image type: {type(image)}. Expected str, Path, or bytes.")
+
+        # Encode to base64
+        base64_image = base64.b64encode(image_data).decode("utf-8")
+
+        # Build multimodal message with text and image content blocks
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt,
+                    },
+                    {
+                        "type": "image",
+                        "encoding": "base64",
+                        "media_type": media_type,
+                        "data": base64_image,
+                    },
+                ],
+            }
+        ]
+
+        logger.info(f"Analyzing image with model {model}")
+
+        # Use the chat endpoint for multimodal request
+        payload = {
+            "model": model,
+            "messages": messages,
+        }
+
+        response = self._make_request("POST", "", json_data=payload)
+        result = response.json()
+
+        # Extract content from response
+        return self.extract_content(result)
 
     def router_chat(
         self,
@@ -471,6 +606,7 @@ class IliadClient:
             "/api/v1/router/chat",
             json_data=payload,
             stream=True,
+            use_root_url=True,
         )
 
         for line in response.iter_lines():

@@ -6,7 +6,7 @@ using Iliad API for text extraction and analysis.
 
 Supported attachment types:
 - Documents: PDF, DOCX, PPTX, XLSX, DOC, PPT, XLS
-- Images: PNG, JPG, JPEG, GIF, TIFF (processed via OCR)
+- Images: PNG, JPG, JPEG, GIF, TIFF (analyzed via multimodal LLM for detailed descriptions)
 - Text: TXT, CSV, JSON, XML, MD
 
 Example:
@@ -54,8 +54,8 @@ class AttachmentFetcher:
     Fetch and process Confluence attachments.
 
     Downloads attachments from Confluence pages and processes them using
-    Iliad API for text extraction. Supports documents, images (via OCR),
-    and text files.
+    Iliad API for text extraction. Supports documents, images (via multimodal
+    LLM analysis for detailed descriptions), and text files.
 
     Attributes:
         confluence_client: Confluence REST client for fetching attachments
@@ -199,7 +199,7 @@ class AttachmentFetcher:
 
         Extracts text from the attachment based on file type:
         - Documents: Use /recognize endpoint
-        - Images: Use /recognize/ocr endpoint
+        - Images: Use multimodal chat for detailed analysis and descriptions
         - Text files: Read directly
 
         Args:
@@ -241,10 +241,10 @@ class AttachmentFetcher:
                 logger.debug(f"Extracted {len(result['extracted_text'])} chars from {filename}")
 
             elif category == "image":
-                # Use OCR for images
-                result["extracted_text"] = self.recognizer.recognize_image(str(path))
+                # Use multimodal LLM for detailed image analysis (not just OCR)
+                result["extracted_text"] = self.recognizer.analyze_image(str(path))
                 result["success"] = True
-                logger.debug(f"OCR extracted {len(result['extracted_text'])} chars from {filename}")
+                logger.debug(f"Image analysis extracted {len(result['extracted_text'])} chars from {filename}")
 
             elif category == "text":
                 # Read text files directly

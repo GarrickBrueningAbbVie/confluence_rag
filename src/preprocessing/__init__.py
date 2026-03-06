@@ -20,10 +20,10 @@ Example:
     >>> pipeline.process("Data_Storage/confluence_pages.json")
 """
 
-from preprocessing.attachment_fetcher import AttachmentFetcher
-from preprocessing.metadata_extractor import MetadataExtractor
-from preprocessing.completeness_assessor import CompletenessAssessor
-from preprocessing.processor import PreprocessingPipeline
+from .attachment_fetcher import AttachmentFetcher
+from .metadata_extractor import MetadataExtractor
+from .completeness_assessor import CompletenessAssessor
+from .processor import PreprocessingPipeline
 
 __all__ = [
     "AttachmentFetcher",

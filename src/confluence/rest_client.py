@@ -394,9 +394,16 @@ class ConfluenceRestClient:
                 download_path = links.get("download", "")
 
                 # Construct full download URL
+                # The download_path typically looks like: /download/attachments/{pageId}/{filename}
+                # Some Confluence instances need /wiki prefix, others don't
                 download_url = ""
                 if download_path:
-                    download_url = f"{self.base_url}/wiki{download_path}"
+                    # If path already starts with /wiki or is absolute, use as-is
+                    if download_path.startswith("/wiki") or download_path.startswith("http"):
+                        download_url = f"{self.base_url}{download_path}" if not download_path.startswith("http") else download_path
+                    else:
+                        # Try without /wiki prefix first (more common for on-premise)
+                        download_url = f"{self.base_url}{download_path}"
 
                 att_data = {
                     "id": attachment.get("id", ""),
@@ -436,22 +443,38 @@ class ConfluenceRestClient:
             >>> # or save to file
             >>> client.download_attachment(att['download_url'], '/tmp/file.pdf')
         """
-        try:
-            response = self.session.get(download_url)
-            response.raise_for_status()
+        # Build list of URLs to try (handles different Confluence configurations)
+        urls_to_try = [download_url]
 
-            if output_path:
-                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                with open(output_path, 'wb') as f:
-                    f.write(response.content)
-                logger.debug(f"Downloaded attachment to {output_path}")
-                return None
-            else:
-                return response.content
+        # If URL contains /wiki/, also try without it
+        if "/wiki/" in download_url:
+            urls_to_try.append(download_url.replace("/wiki/", "/"))
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to download attachment from {download_url}: {e}")
-            return None
+        # If URL doesn't contain /wiki/, also try with it
+        elif "/download/attachments/" in download_url:
+            urls_to_try.append(download_url.replace("/download/", "/wiki/download/"))
+
+        for url in urls_to_try:
+            try:
+                logger.debug(f"Trying to download from: {url}")
+                response = self.session.get(url)
+                response.raise_for_status()
+
+                if output_path:
+                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                    with open(output_path, 'wb') as f:
+                        f.write(response.content)
+                    logger.debug(f"Downloaded attachment to {output_path}")
+                    return None
+                else:
+                    return response.content
+
+            except requests.exceptions.RequestException as e:
+                logger.debug(f"Failed to download from {url}: {e}")
+                continue
+
+        logger.error(f"Failed to download attachment from all attempted URLs: {urls_to_try}")
+        return None
 
     def search_pages(self, cql: str, limit: int = 100) -> List[ConfluencePage]:
         """

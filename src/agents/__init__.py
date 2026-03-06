@@ -36,18 +36,18 @@ Example:
     >>> print(result.final_answer)
 """
 
-from agents.base import (
+from .base import (
     AgentStatus,
     AgentContext,
     AgentResult,
     BaseAgent,
 )
-from agents.rag_agent import RAGAgent
-from agents.database_agent import DatabaseAgent
-from agents.plotting_agent import PlottingAgent
-from agents.iterative_agent import IterativeDescribeAgent
-from agents.feedback_controller import FeedbackController, RefinementTrigger
-from agents.orchestrator import (
+from .rag_agent import RAGAgent
+from .database_agent import DatabaseAgent
+from .plotting_agent import PlottingAgent
+from .iterative_agent import IterativeDescribeAgent
+from .feedback_controller import FeedbackController, RefinementTrigger
+from .orchestrator import (
     AgentOrchestrator,
     ExecutionStep,
     OrchestrationResult,
