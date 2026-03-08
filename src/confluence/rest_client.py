@@ -37,6 +37,7 @@ class ConfluencePage:
         content_html: Raw HTML content (storage format)
         content_text: Extracted plain text content
         external_links: List of external URLs found in content
+        github_links: List of parsed GitHub link info (owner, repo, path, etc.)
         parent_id: ID of parent page (if any)
         parent_title: Title of parent page (if any)
         ancestors: List of ancestor pages from root to parent
@@ -62,6 +63,7 @@ class ConfluencePage:
     content_html: Optional[str] = None
     content_text: Optional[str] = None
     external_links: List[str] = field(default_factory=list)
+    github_links: List[Dict[str, Any]] = field(default_factory=list)
     parent_id: Optional[str] = None
     parent_title: Optional[str] = None
     ancestors: List[Dict[str, str]] = field(default_factory=list)
@@ -192,6 +194,155 @@ class ConfluenceRestClient:
 
         # Return unique links
         return list(set(links))
+
+    def _categorize_external_links(
+        self, links: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Categorize external links by type and extract metadata.
+
+        Identifies GitHub, Jira, SharePoint, and other link types.
+        For GitHub links, extracts owner, repo, and path information.
+
+        Args:
+            links: List of external URLs
+
+        Returns:
+            Dictionary with categorized links:
+            - github: List of GitHub link info dicts
+            - jira: List of Jira link info dicts
+            - sharepoint: List of SharePoint links
+            - other: List of uncategorized links
+        """
+        categorized = {
+            "github": [],
+            "jira": [],
+            "sharepoint": [],
+            "other": [],
+        }
+
+        for link in links:
+            parsed = urlparse(link)
+            domain = parsed.netloc.lower()
+
+            # GitHub links (public and enterprise)
+            if "github" in domain:
+                github_info = self._parse_github_url(link)
+                if github_info:
+                    categorized["github"].append(github_info)
+
+            # Jira links
+            elif "jira" in domain:
+                categorized["jira"].append({
+                    "url": link,
+                    "domain": domain,
+                })
+
+            # SharePoint links
+            elif "sharepoint" in domain or "abbvienet.sharepoint" in domain:
+                categorized["sharepoint"].append({
+                    "url": link,
+                    "domain": domain,
+                })
+
+            # Other links
+            else:
+                categorized["other"].append({
+                    "url": link,
+                    "domain": domain,
+                })
+
+        return categorized
+
+    def _parse_github_url(self, url: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse a GitHub URL and extract repository information.
+
+        Handles both github.com and enterprise GitHub URLs.
+        Extracts owner, repo, branch, file path, and link type.
+
+        Args:
+            url: GitHub URL to parse
+
+        Returns:
+            Dictionary with parsed info, or None if not a valid GitHub URL:
+            - url: Original URL
+            - domain: GitHub domain (github.com or enterprise)
+            - owner: Repository owner/organization
+            - repo: Repository name
+            - type: Link type (repo, blob, tree, issues, pulls, etc.)
+            - branch: Branch name (if applicable)
+            - path: File/folder path (if applicable)
+            - line_start: Starting line number (if applicable)
+            - line_end: Ending line number (if applicable)
+        """
+        import re
+
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+
+        if "github" not in domain:
+            return None
+
+        path_parts = parsed.path.strip("/").split("/")
+
+        if len(path_parts) < 2:
+            # Not enough path parts for owner/repo
+            return {
+                "url": url,
+                "domain": domain,
+                "owner": path_parts[0] if path_parts else None,
+                "repo": None,
+                "type": "profile" if path_parts else "home",
+            }
+
+        owner = path_parts[0]
+        repo = path_parts[1]
+
+        result = {
+            "url": url,
+            "domain": domain,
+            "owner": owner,
+            "repo": repo,
+            "type": "repo",  # Default to repo root
+            "branch": None,
+            "path": None,
+            "line_start": None,
+            "line_end": None,
+        }
+
+        # Parse additional path components
+        if len(path_parts) > 2:
+            link_type = path_parts[2]
+            result["type"] = link_type
+
+            if link_type in ("blob", "tree") and len(path_parts) > 3:
+                # File or directory link: /owner/repo/blob/branch/path/to/file
+                result["branch"] = path_parts[3]
+                if len(path_parts) > 4:
+                    result["path"] = "/".join(path_parts[4:])
+
+            elif link_type == "issues" and len(path_parts) > 3:
+                # Issue link: /owner/repo/issues/123
+                result["issue_number"] = path_parts[3]
+
+            elif link_type == "pull" and len(path_parts) > 3:
+                # PR link: /owner/repo/pull/123
+                result["pr_number"] = path_parts[3]
+
+            elif link_type == "commit" and len(path_parts) > 3:
+                # Commit link: /owner/repo/commit/abc123
+                result["commit_sha"] = path_parts[3]
+
+        # Check for line number references in fragment (e.g., #L10-L20)
+        if parsed.fragment:
+            line_match = re.match(r"L(\d+)(?:-L(\d+))?", parsed.fragment)
+            if line_match:
+                result["line_start"] = int(line_match.group(1))
+                if line_match.group(2):
+                    result["line_end"] = int(line_match.group(2))
+
+        return result
 
     def test_connection(self) -> bool:
         """
@@ -579,8 +730,12 @@ class ConfluenceRestClient:
 
         # Extract external links from HTML content
         external_links = []
+        github_links = []
         if content_html:
             external_links = self._extract_external_links(content_html)
+            # Parse and categorize GitHub links for easier agent integration
+            categorized = self._categorize_external_links(external_links)
+            github_links = categorized.get("github", [])
 
         # Extract tree structure information (ancestors and children)
         parent_id = None
@@ -636,6 +791,7 @@ class ConfluenceRestClient:
             content_html=content_html,
             content_text=content_text,
             external_links=external_links,
+            github_links=github_links,
             parent_id=parent_id,
             parent_title=parent_title,
             ancestors=ancestors,
@@ -674,6 +830,7 @@ class ConfluenceRestClient:
                 "content_html": page.content_html,
                 "content_text": page.content_text,
                 "external_links": page.external_links,
+                "github_links": page.github_links,
                 "parent_id": page.parent_id,
                 "parent_title": page.parent_title,
                 "ancestors": page.ancestors,

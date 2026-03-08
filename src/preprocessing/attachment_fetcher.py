@@ -274,6 +274,107 @@ class AttachmentFetcher:
 
         return result
 
+    def _format_attachment_content(
+        self,
+        result: Dict[str, Any],
+    ) -> str:
+        """Format attachment content with semantic labels for RAG/LLM consumption.
+
+        Creates clear, type-specific labels so an LLM can understand the source
+        and nature of the content when generating responses.
+
+        Args:
+            result: Processing result dictionary with filename, file_type,
+                   extracted_text, and optional description
+
+        Returns:
+            Formatted content string with semantic labels
+
+        Example output for images:
+            [BEGIN IMAGE ANALYSIS: architecture_diagram.png]
+            Source: Image file (PNG)
+            The following content is an AI-generated analysis of an image attachment.
+
+            This diagram shows a microservices architecture with...
+            [END IMAGE ANALYSIS: architecture_diagram.png]
+        """
+        filename = result.get("filename", "unknown")
+        file_type = result.get("file_type", "unknown")
+        content = result.get("extracted_text", "")
+        description = result.get("description", "")
+
+        # Get file extension for more specific labeling
+        ext = Path(filename).suffix.lower() if filename != "unknown" else ""
+        ext_label = ext.upper().lstrip(".") if ext else "UNKNOWN"
+
+        if file_type == "image":
+            # Clear semantic label for image analysis
+            header = f"[BEGIN IMAGE ANALYSIS: {filename}]\n"
+            header += f"Source: Image file ({ext_label})\n"
+            header += "The following content is an AI-generated analysis of an image attachment.\n"
+            if description:
+                header += f"Summary: {description}\n"
+            header += "\n"
+            footer = f"\n[END IMAGE ANALYSIS: {filename}]"
+            return header + content + footer
+
+        elif file_type == "document":
+            # Label for extracted document text with specific format
+            doc_type_map = {
+                ".pdf": "PDF document",
+                ".docx": "Microsoft Word document",
+                ".doc": "Microsoft Word document (legacy)",
+                ".pptx": "Microsoft PowerPoint presentation",
+                ".ppt": "Microsoft PowerPoint presentation (legacy)",
+                ".xlsx": "Microsoft Excel spreadsheet",
+                ".xls": "Microsoft Excel spreadsheet (legacy)",
+                ".rtf": "Rich Text Format document",
+                ".odt": "OpenDocument text",
+                ".ods": "OpenDocument spreadsheet",
+                ".odp": "OpenDocument presentation",
+            }
+            doc_type = doc_type_map.get(ext, f"{ext_label} document")
+
+            header = f"[BEGIN DOCUMENT CONTENT: {filename}]\n"
+            header += f"Source: {doc_type}\n"
+            header += "The following content was extracted from an attached document.\n"
+            if description:
+                header += f"Summary: {description}\n"
+            header += "\n"
+            footer = f"\n[END DOCUMENT CONTENT: {filename}]"
+            return header + content + footer
+
+        elif file_type == "text":
+            # Label for text file content with specific format
+            text_type_map = {
+                ".txt": "Plain text file",
+                ".csv": "CSV (comma-separated values) file",
+                ".json": "JSON data file",
+                ".xml": "XML data file",
+                ".md": "Markdown file",
+                ".html": "HTML file",
+            }
+            text_type = text_type_map.get(ext, f"{ext_label} text file")
+
+            header = f"[BEGIN TEXT FILE: {filename}]\n"
+            header += f"Source: {text_type}\n"
+            header += "The following content is from an attached text file.\n"
+            if description:
+                header += f"Summary: {description}\n"
+            header += "\n"
+            footer = f"\n[END TEXT FILE: {filename}]"
+            return header + content + footer
+
+        else:
+            # Fallback for unknown types
+            header = f"[BEGIN ATTACHMENT: {filename}]\n"
+            header += f"Source: {ext_label} file\n"
+            if description:
+                header += f"Summary: {description}\n"
+            header += "\n"
+            footer = f"\n[END ATTACHMENT: {filename}]"
+            return header + content + footer
+
     def _generate_description(
         self,
         content: str,
@@ -352,13 +453,9 @@ Description (keep under {max_length} characters):"""
                 result = self.process_attachment(file_path)
 
                 if result["success"] and result["extracted_text"]:
-                    # Add content with header
-                    header = f"\n\n--- Attachment: {result['filename']} ---\n"
-                    if result["description"]:
-                        header += f"Description: {result['description']}\n"
-                    header += "\n"
-
-                    all_content.append(header + result["extracted_text"])
+                    # Add content with type-specific semantic labels for RAG/LLM
+                    formatted = self._format_attachment_content(result)
+                    all_content.append(formatted)
 
         # Cleanup downloaded files if requested
         if cleanup:
@@ -595,15 +692,12 @@ Description (keep under {max_length} characters):"""
             cleanup=cleanup,
         )
 
-        # Combine results
+        # Combine results with semantic labels
         all_content = []
         for result in results:
             if result.get("success") and result.get("extracted_text"):
-                header = f"\n\n--- Attachment: {result['filename']} ---\n"
-                if result.get("description"):
-                    header += f"Description: {result['description']}\n"
-                header += "\n"
-                all_content.append(header + result["extracted_text"])
+                formatted = self._format_attachment_content(result)
+                all_content.append(formatted)
 
         combined = "\n".join(all_content)
         logger.info(
