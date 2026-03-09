@@ -5,12 +5,14 @@ End-to-end pipeline for Confluence RAG data acquisition and preprocessing.
 This script performs the complete data pipeline:
 1. Fetch all pages from Confluence
 2. Preprocess pages (metadata, completeness scores)
-3. Vectorize for RAG
+3. Conglomerate pages by main project
+4. Vectorize for RAG (both page chunks and project-level)
 
 Usage:
     python -m src.data_pipeline                      # Full pipeline (fast mode)
     python -m src.data_pipeline --fetch-only         # Only fetch from Confluence
     python -m src.data_pipeline --preprocess-only    # Only preprocess existing data
+    python -m src.data_pipeline --conglomerate-only  # Only conglomerate existing data
     python -m src.data_pipeline --vectorize-only     # Only vectorize existing data
     python -m src.data_pipeline --with-technologies  # Enable technology extraction
     python -m src.data_pipeline --with-completeness  # Enable completeness assessment
@@ -339,6 +341,9 @@ def vectorize_data(input_path: str = None) -> None:
             "url": page.get("url", ""),
             "space_key": page.get("space_key", ""),
             "parent_project": page.get("parent_project", ""),
+            "main_project": page.get("main_project", ""),
+            "main_project_id": page.get("main_project_id", ""),
+            "depth": page.get("depth", 0),
             "type": "confluence_page",
         })
         ids.append(f"conf_{page_id}")
@@ -357,6 +362,112 @@ def vectorize_data(input_path: str = None) -> None:
     logger.info("Vectorization complete!")
 
 
+def conglomerate_projects(input_path: str = None, output_path: str = None) -> list:
+    """Conglomerate pages by main project into single documents.
+
+    Args:
+        input_path: Path to preprocessed pages JSON. Defaults to confluence_pages_processed.json.
+        output_path: Path to save conglomerated projects JSON. Defaults to conglomerated_projects.json.
+
+    Returns:
+        List of conglomerated project dictionaries.
+    """
+    from config import ConfigConfluenceRag
+    from preprocessing.project_conglomerator import ProjectConglomerator
+
+    logger.info("=" * 60)
+    logger.info("STEP 3.5: CONGLOMERATING PROJECTS")
+    logger.info("=" * 60)
+
+    # Default paths
+    data_dir = PROJECT_ROOT / "Data_Storage"
+    input_path = (
+        Path(input_path) if input_path else data_dir / "confluence_pages_processed.json"
+    )
+    output_path = (
+        Path(output_path) if output_path else Path(ConfigConfluenceRag.CONGLOMERATED_JSON_PATH)
+    )
+
+    if not input_path.exists():
+        # Fall back to non-processed version
+        input_path = data_dir / "confluence_pages.json"
+
+    if not input_path.exists():
+        logger.error(f"Input file not found: {input_path}")
+        sys.exit(1)
+
+    # Load pages
+    logger.info(f"Loading pages from {input_path}")
+    with open(input_path, "r", encoding="utf-8") as f:
+        pages = json.load(f)
+
+    logger.info(f"Loaded {len(pages)} pages")
+
+    # Conglomerate by main project
+    conglomerator = ProjectConglomerator(
+        max_content_length=ConfigConfluenceRag.MAX_PROJECT_CONTENT_LENGTH
+    )
+    projects = conglomerator.conglomerate_pages(pages)
+
+    logger.info(f"Created {len(projects)} conglomerated projects")
+
+    # Save conglomerated projects
+    conglomerator.save_conglomerated(projects, str(output_path))
+    logger.info(f"Saved conglomerated projects to {output_path}")
+
+    # Log summary
+    total_pages = sum(p.get("page_count", 0) for p in projects)
+    logger.info(f"  Total pages included: {total_pages}")
+    logger.info(f"  Average pages per project: {total_pages / len(projects):.1f}")
+
+    logger.info("Conglomeration complete!")
+    return projects
+
+
+def vectorize_projects(input_path: str = None) -> None:
+    """Vectorize conglomerated projects for project-level RAG retrieval.
+
+    Args:
+        input_path: Path to conglomerated projects JSON. Defaults to conglomerated_projects.json.
+    """
+    from config import ConfigConfluenceRag
+    from rag.project_vectorstore import ProjectVectorStore
+
+    logger.info("=" * 60)
+    logger.info("STEP 4: VECTORIZING PROJECTS")
+    logger.info("=" * 60)
+
+    # Default path
+    input_path = (
+        Path(input_path) if input_path else Path(ConfigConfluenceRag.CONGLOMERATED_JSON_PATH)
+    )
+
+    if not input_path.exists():
+        logger.warning(f"Conglomerated projects file not found: {input_path}")
+        logger.warning("Skipping project vectorization. Run conglomeration first.")
+        return
+
+    # Load conglomerated projects
+    logger.info(f"Loading conglomerated projects from {input_path}")
+    with open(input_path, "r", encoding="utf-8") as f:
+        projects = json.load(f)
+
+    logger.info(f"Loaded {len(projects)} conglomerated projects")
+
+    # Initialize project vector store
+    project_store = ProjectVectorStore(
+        persist_directory=ConfigConfluenceRag.PROJECT_VECTOR_DB_PATH,
+        embedding_model=ConfigConfluenceRag.EMBEDDING_MODEL,
+    )
+
+    # Add projects to vector store
+    logger.info("Adding projects to vector store (generating embeddings)...")
+    project_store.add_projects(projects)
+
+    logger.info(f"Project vector store now contains {project_store.count()} projects")
+    logger.info("Project vectorization complete!")
+
+
 def main():
     """Run the end-to-end pipeline."""
     parser = argparse.ArgumentParser(
@@ -367,6 +478,7 @@ Examples:
     python -m src.data_pipeline                      # Full pipeline (fast mode)
     python -m src.data_pipeline --fetch-only         # Only fetch from Confluence
     python -m src.data_pipeline --preprocess-only    # Only preprocess existing data
+    python -m src.data_pipeline --conglomerate-only  # Only conglomerate existing data
     python -m src.data_pipeline --vectorize-only     # Only vectorize existing data
     python -m src.data_pipeline --with-completeness  # Enable completeness scoring
     python -m src.data_pipeline --with-technologies  # Enable technology extraction
@@ -387,6 +499,16 @@ Examples:
         "--vectorize-only",
         action="store_true",
         help="Only vectorize existing data",
+    )
+    parser.add_argument(
+        "--conglomerate-only",
+        action="store_true",
+        help="Only conglomerate existing preprocessed data",
+    )
+    parser.add_argument(
+        "--skip-conglomerate",
+        action="store_true",
+        help="Skip conglomeration step",
     )
     parser.add_argument(
         "--with-attachments",
@@ -421,25 +543,22 @@ Examples:
     logger.info("CONFLUENCE RAG PIPELINE")
     logger.info("=" * 60)
 
-    # Determine what to run
-    run_fetch = not (args.preprocess_only or args.vectorize_only)
-    run_preprocess = not (args.fetch_only or args.vectorize_only)
-    run_vectorize = not (args.fetch_only or args.preprocess_only or args.skip_vectorize)
+    # Determine what to run based on flags
+    only_flags = [args.fetch_only, args.preprocess_only, args.conglomerate_only, args.vectorize_only]
+    has_only_flag = any(only_flags)
 
-    if args.fetch_only:
+    if has_only_flag:
+        # Only run the specific step requested
+        run_fetch = args.fetch_only
+        run_preprocess = args.preprocess_only
+        run_conglomerate = args.conglomerate_only
+        run_vectorize = args.vectorize_only
+    else:
+        # Run full pipeline unless skipped
         run_fetch = True
-        run_preprocess = False
-        run_vectorize = False
-
-    if args.preprocess_only:
-        run_fetch = False
         run_preprocess = True
-        run_vectorize = False
-
-    if args.vectorize_only:
-        run_fetch = False
-        run_preprocess = False
-        run_vectorize = True
+        run_conglomerate = not args.skip_conglomerate
+        run_vectorize = not args.skip_vectorize
 
     # Run pipeline steps
     try:
@@ -453,8 +572,12 @@ Examples:
                 skip_completeness=not args.with_completeness,
             )
 
+        if run_conglomerate:
+            conglomerate_projects()
+
         if run_vectorize:
             vectorize_data()
+            vectorize_projects()
 
         logger.info("=" * 60)
         logger.info("PIPELINE COMPLETE!")
