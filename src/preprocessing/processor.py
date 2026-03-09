@@ -275,6 +275,62 @@ class PreprocessingPipeline:
         logger.info(f"  - {with_attachments}/{len(pages)} pages have attachments")
         logger.info(f"  - {with_content}/{len(pages)} pages have extracted content")
 
+        # Merge attachment content into content_text
+        pages = self._merge_attachment_content_all(pages)
+
+        return pages
+
+    def _merge_attachment_content(self, page: Dict[str, Any]) -> str:
+        """
+        Merge attachment content into content_text for a single page.
+
+        Appends attachment content to the end of content_text with a
+        clear separator for better RAG retrieval.
+
+        Args:
+            page: Page dictionary with content_text and attachment_content
+
+        Returns:
+            Merged content string
+        """
+        content_text = page.get("content_text", "") or ""
+        attachment_content = page.get("attachment_content", "") or ""
+
+        if not attachment_content.strip():
+            return content_text
+
+        if not content_text.strip():
+            return attachment_content
+
+        # Add clear separator and append attachment content
+        separator = "\n\n--- ATTACHMENT CONTENT ---\n\n"
+        return f"{content_text}{separator}{attachment_content}"
+
+    def _merge_attachment_content_all(
+        self, pages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Merge attachment content into content_text for all pages.
+
+        This integrates attachment text into the main content field
+        so it's available during RAG retrieval and vectorization.
+
+        Args:
+            pages: List of page dictionaries
+
+        Returns:
+            Updated pages with merged content_text
+        """
+        merged_count = 0
+        for page in pages:
+            attachment_content = page.get("attachment_content", "") or ""
+            if attachment_content.strip():
+                page["content_text"] = self._merge_attachment_content(page)
+                merged_count += 1
+
+        if merged_count > 0:
+            logger.info(f"Merged attachment content into content_text for {merged_count} pages")
+
         return pages
 
     def _process_page_attachments_parallel(
@@ -354,6 +410,9 @@ class PreprocessingPipeline:
         logger.info(f"Attachment processing complete (parallel):")
         logger.info(f"  - {with_attachments}/{len(pages)} pages have attachments")
         logger.info(f"  - {with_content}/{len(pages)} pages have extracted content")
+
+        # Merge attachment content into content_text
+        pages = self._merge_attachment_content_all(pages)
 
         return pages
 
