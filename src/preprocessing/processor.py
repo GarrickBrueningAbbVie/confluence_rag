@@ -62,6 +62,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from confluence.rest_client import ConfluenceRestClient
 from iliad.client import IliadClient, IliadClientConfig
 from preprocessing.attachment_fetcher import AttachmentFetcher
+from preprocessing.attachment_deduplicator import AttachmentDeduplicator
 from preprocessing.metadata_extractor import MetadataExtractor
 from preprocessing.completeness_assessor import CompletenessAssessor
 
@@ -71,17 +72,19 @@ class PreprocessingPipeline:
     Complete preprocessing pipeline for Confluence pages.
 
     Orchestrates:
-    1. Attachment processing (optional)
-    2. Metadata extraction
+    1. Attachment processing (optional, with deduplication)
+    2. Metadata extraction (parent_project, main_project, technologies)
     3. Completeness assessment
 
     Attributes:
         confluence_client: Confluence REST client (for attachments)
         iliad_client: Iliad API client
         attachment_fetcher: Attachment processing component
+        attachment_deduplicator: Duplicate attachment detection component
         metadata_extractor: Metadata extraction component
         completeness_assessor: Completeness assessment component
         process_attachments: Whether to process attachments
+        deduplicate_attachments: Whether to deduplicate attachments
 
     Example:
         >>> pipeline = PreprocessingPipeline.from_env()
@@ -94,6 +97,7 @@ class PreprocessingPipeline:
         iliad_client: Optional[IliadClient] = None,
         attachment_storage_path: str = "Data_Storage/attachments",
         process_attachments: bool = True,
+        deduplicate_attachments: bool = True,
         extract_technologies: bool = True,
         use_llm_completeness: bool = False,
     ) -> None:
@@ -104,12 +108,14 @@ class PreprocessingPipeline:
             iliad_client: Iliad API client (required for LLM features)
             attachment_storage_path: Path to store downloaded attachments
             process_attachments: Whether to fetch and process attachments
+            deduplicate_attachments: Whether to deduplicate attachments with LLM
             extract_technologies: Whether to extract technologies with LLM
             use_llm_completeness: Whether to use LLM for completeness assessment
         """
         self.confluence_client = confluence_client
         self.iliad_client = iliad_client
         self.process_attachments_enabled = process_attachments and confluence_client is not None
+        self.deduplicate_attachments_enabled = deduplicate_attachments and iliad_client is not None
         self.extract_technologies = extract_technologies
         self.use_llm_completeness = use_llm_completeness
 
@@ -123,6 +129,12 @@ class PreprocessingPipeline:
         else:
             self.attachment_fetcher = None
 
+        # Initialize deduplicator if enabled
+        if self.deduplicate_attachments_enabled:
+            self.attachment_deduplicator = AttachmentDeduplicator(iliad_client)
+        else:
+            self.attachment_deduplicator = None
+
         if iliad_client:
             self.metadata_extractor = MetadataExtractor(iliad_client)
         else:
@@ -133,6 +145,7 @@ class PreprocessingPipeline:
         logger.info(
             f"Initialized PreprocessingPipeline "
             f"(attachments: {self.process_attachments_enabled}, "
+            f"deduplication: {self.deduplicate_attachments_enabled}, "
             f"technologies: {extract_technologies}, "
             f"llm_completeness: {use_llm_completeness})"
         )
@@ -141,6 +154,7 @@ class PreprocessingPipeline:
     def from_env(
         cls,
         process_attachments: bool = True,
+        deduplicate_attachments: bool = True,
         extract_technologies: bool = True,
         use_llm_completeness: bool = False,
     ) -> "PreprocessingPipeline":
@@ -157,6 +171,7 @@ class PreprocessingPipeline:
 
         Args:
             process_attachments: Whether to process attachments
+            deduplicate_attachments: Whether to deduplicate attachments with LLM
             extract_technologies: Whether to extract technologies
             use_llm_completeness: Whether to use LLM for completeness
 
@@ -202,6 +217,7 @@ class PreprocessingPipeline:
             iliad_client=iliad_client,
             attachment_storage_path=attachment_path,
             process_attachments=process_attachments,
+            deduplicate_attachments=deduplicate_attachments,
             extract_technologies=extract_technologies,
             use_llm_completeness=use_llm_completeness,
         )
