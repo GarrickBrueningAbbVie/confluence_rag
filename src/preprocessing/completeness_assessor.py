@@ -244,7 +244,7 @@ class CompletenessAssessor:
         logger.info(f"Initialized CompletenessAssessor with {len(self.template)} sections")
 
     def _get_page_depth(self, page_data: Dict[str, Any]) -> int:
-        """Calculate page depth from ancestors.
+        """Calculate page depth from parents.
 
         Handles cases where depth field is None or missing.
 
@@ -256,9 +256,9 @@ class CompletenessAssessor:
         """
         depth = page_data.get("depth")
         if depth is None:
-            # Calculate from ancestors
-            ancestors = page_data.get("ancestors", [])
-            depth = len(ancestors) + 1
+            # Calculate from parents
+            parents = page_data.get("parents", [])
+            depth = len(parents) + 1
         return depth
 
     def _build_page_index(self, pages: List[Dict[str, Any]]) -> None:

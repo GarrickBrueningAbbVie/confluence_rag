@@ -54,8 +54,9 @@ def chunk_pages(pages_data: List[Dict[str, Any]],
 
         # Create chunk objects with metadata including hierarchy info for re-ranking
         for i, chunk in enumerate(text_chunks):
-            # Get children list (needed for re-ranking)
+            # Get children and parents lists (needed for re-ranking)
             children = page.get('children', [])
+            parents = page.get('parents', [])
 
             chunks.append({
                 'text': chunk,
@@ -69,12 +70,15 @@ def chunk_pages(pages_data: List[Dict[str, Any]],
                     'version': page.get('version', ''),
                     'page_id': page.get('id', ''),
                     # Hierarchy metadata for re-ranking
-                    'depth': page.get('depth', len(page.get('ancestors', [])) + 1),
-                    'parent_id': page.get('parent_id', ''),
-                    'parent_title': page.get('parent_title', ''),
+                    'depth': page.get('depth', len(parents) + 1),
+                    'parents': parents,
                     'children': children,
                     'has_children': len(children) > 0,
                     'children_count': len(children),
+                    # Project metadata
+                    'parent_project': page.get('parent_project', ''),
+                    'main_project': page.get('main_project', ''),
+                    'main_project_id': page.get('main_project_id', ''),
                 }
             })
 

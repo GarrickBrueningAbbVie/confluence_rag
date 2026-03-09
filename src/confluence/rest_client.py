@@ -38,14 +38,14 @@ class ConfluencePage:
         content_text: Extracted plain text content
         external_links: List of external URLs found in content
         github_links: List of parsed GitHub link info (owner, repo, path, etc.)
-        parent_id: ID of parent page (if any)
-        parent_title: Title of parent page (if any)
-        ancestors: List of ancestor pages from root to parent
+        parents: List of parent pages from root to immediate parent
         children: List of child pages
         depth: Page hierarchy depth (1 = top-level)
         attachments: List of attachment metadata dicts
         attachment_content: Extracted text from all attachments
         parent_project: Name of the parent project (for DSA pages)
+        main_project: Name of the main project (depth 3 ancestor for DSA pages)
+        main_project_id: ID of the main project page
         technologies: List of technologies used in this project
         completeness_score: Project completeness score (0-100, NaN for subpages)
         completeness_summary: Summary of completeness assessment
@@ -64,15 +64,15 @@ class ConfluencePage:
     content_text: Optional[str] = None
     external_links: List[str] = field(default_factory=list)
     github_links: List[Dict[str, Any]] = field(default_factory=list)
-    parent_id: Optional[str] = None
-    parent_title: Optional[str] = None
-    ancestors: List[Dict[str, str]] = field(default_factory=list)
+    parents: List[Dict[str, str]] = field(default_factory=list)
     children: List[Dict[str, str]] = field(default_factory=list)
     depth: int = 1  # Page hierarchy depth: 1 = top-level, higher = deeper in tree
     # New fields for preprocessing enhancements
     attachments: List[Dict[str, Any]] = field(default_factory=list)
     attachment_content: str = ""
     parent_project: Optional[str] = None
+    main_project: Optional[str] = None
+    main_project_id: Optional[str] = None
     technologies: List[str] = field(default_factory=list)
     completeness_score: Optional[float] = None
     completeness_summary: Optional[str] = None
@@ -737,27 +737,21 @@ class ConfluenceRestClient:
             categorized = self._categorize_external_links(external_links)
             github_links = categorized.get("github", [])
 
-        # Extract tree structure information (ancestors and children)
-        parent_id = None
-        parent_title = None
-        ancestors = []
+        # Extract tree structure information (parents and children)
+        parents = []
 
-        # Get ancestors (parent pages)
-        ancestors_data = page_data.get("ancestors", [])
-        if ancestors_data:
-            # Ancestors are ordered from root to immediate parent
-            ancestors = [
+        # Get parents (ancestor pages from root to immediate parent)
+        parents_data = page_data.get("ancestors", [])
+        if parents_data:
+            # Parents are ordered from root to immediate parent
+            parents = [
                 {
-                    "id": ancestor.get("id", ""),
-                    "title": ancestor.get("title", ""),
-                    "type": ancestor.get("type", "page")
+                    "id": parent.get("id", ""),
+                    "title": parent.get("title", ""),
+                    "type": parent.get("type", "page")
                 }
-                for ancestor in ancestors_data
+                for parent in parents_data
             ]
-            # The last ancestor is the immediate parent
-            if ancestors:
-                parent_id = ancestors[-1]["id"]
-                parent_title = ancestors[-1]["title"]
 
         # Get children pages
         children = []
@@ -773,10 +767,10 @@ class ConfluenceRestClient:
                 for child in results
             ]
 
-        # Calculate page depth from ancestors
-        # Depth 1 = root/top-level pages (no ancestors or only space home)
-        # Depth increases with each ancestor level
-        depth = len(ancestors) + 1
+        # Calculate page depth from parents
+        # Depth 1 = root/top-level pages (no parents or only space home)
+        # Depth increases with each parent level
+        depth = len(parents) + 1
 
         return ConfluencePage(
             id=page_id,
@@ -792,9 +786,7 @@ class ConfluenceRestClient:
             content_text=content_text,
             external_links=external_links,
             github_links=github_links,
-            parent_id=parent_id,
-            parent_title=parent_title,
-            ancestors=ancestors,
+            parents=parents,
             children=children,
             depth=depth,
         )
@@ -831,15 +823,15 @@ class ConfluenceRestClient:
                 "content_text": page.content_text,
                 "external_links": page.external_links,
                 "github_links": page.github_links,
-                "parent_id": page.parent_id,
-                "parent_title": page.parent_title,
-                "ancestors": page.ancestors,
+                "parents": page.parents,
                 "children": page.children,
                 "depth": page.depth,
-                # New preprocessing fields
+                # Preprocessing fields
                 "attachments": page.attachments,
                 "attachment_content": page.attachment_content,
                 "parent_project": page.parent_project,
+                "main_project": page.main_project,
+                "main_project_id": page.main_project_id,
                 "technologies": page.technologies,
                 "completeness_score": page.completeness_score,
                 "completeness_summary": page.completeness_summary,

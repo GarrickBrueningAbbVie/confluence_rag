@@ -139,8 +139,8 @@ def preprocess_pages(
     # Recalculate depth for all pages
     logger.info("Recalculating page depths...")
     for page in pages:
-        ancestors = page.get("ancestors", [])
-        page["depth"] = len(ancestors) + 1
+        parents = page.get("parents", [])
+        page["depth"] = len(parents) + 1
 
     # Extract parent project (no LLM needed)
     logger.info("Extracting parent projects...")
@@ -157,21 +157,21 @@ def preprocess_pages(
         return any(root.lower() in title_lower for root in DSA_PROJECT_ROOTS)
 
     for page in pages:
-        ancestors = page.get("ancestors", [])
+        parents = page.get("parents", [])
         title = page.get("title", "")
 
         parent_project = None
-        if ancestors:
+        if parents:
             root_index = None
-            for i, ancestor in enumerate(ancestors):
-                if is_project_root(ancestor.get("title", "")):
+            for i, parent in enumerate(parents):
+                if is_project_root(parent.get("title", "")):
                     root_index = i
                     break
 
             if root_index is not None:
                 project_index = root_index + 1
-                if project_index < len(ancestors):
-                    parent_project = ancestors[project_index].get("title", "")
+                if project_index < len(parents):
+                    parent_project = parents[project_index].get("title", "")
                 else:
                     parent_project = title
 

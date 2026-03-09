@@ -14,7 +14,7 @@ Example:
     >>> iliad = IliadClient(IliadClientConfig.from_env())
     >>> extractor = MetadataExtractor(iliad)
     >>>
-    >>> page_data = {"title": "My Project", "ancestors": [...], "content_text": "..."}
+    >>> page_data = {"title": "My Project", "parents": [...], "content_text": "..."}
     >>> updated = extractor.process_page(page_data)
     >>> print(updated["parent_project"], updated["technologies"])
 """
@@ -48,7 +48,7 @@ class MetadataExtractor:
     """
     Extract structured metadata from Confluence pages.
 
-    Uses page hierarchy (ancestors) to determine the parent project
+    Uses page hierarchy (parents) to determine the parent project
     and Iliad API to extract technologies from content.
 
     Attributes:
@@ -102,13 +102,13 @@ class MetadataExtractor:
         of the root category - this is the project name.
 
         Logic:
-        1. Walk ancestors from root to parent
-        2. Find the first ancestor that is a project root
-        3. Return the next ancestor's title (the project name)
+        1. Walk parents from root to immediate parent
+        2. Find the first parent that is a project root
+        3. Return the next parent's title (the project name)
         4. If page itself is directly under root, return page's title
 
         Args:
-            page_data: Page dictionary with 'ancestors' list
+            page_data: Page dictionary with 'parents' list
 
         Returns:
             Parent project name, or None if not under a project
@@ -118,33 +118,33 @@ class MetadataExtractor:
             >>> parent = extractor.extract_parent_project(page_data)
             >>> print(parent)  # "Code Doc Tool"
         """
-        ancestors = page_data.get("ancestors", [])
+        parents = page_data.get("parents", [])
         title = page_data.get("title", "")
 
-        if not ancestors:
-            # No ancestors - check if this is a project root
+        if not parents:
+            # No parents - check if this is a project root
             if self._is_project_root(title):
                 return None  # This is a root, not a project
             return None
 
-        # Find the project root in ancestors
+        # Find the project root in parents
         root_index = None
-        for i, ancestor in enumerate(ancestors):
-            ancestor_title = ancestor.get("title", "")
-            if self._is_project_root(ancestor_title):
+        for i, parent in enumerate(parents):
+            parent_title = parent.get("title", "")
+            if self._is_project_root(parent_title):
                 root_index = i
                 break
 
         if root_index is None:
-            # No project root found in ancestors
+            # No project root found in parents
             return None
 
-        # The project name is the ancestor immediately after the root
+        # The project name is the parent immediately after the root
         project_index = root_index + 1
 
-        if project_index < len(ancestors):
-            # There's an ancestor after the root - that's the project
-            return ancestors[project_index].get("title", "")
+        if project_index < len(parents):
+            # There's a parent after the root - that's the project
+            return parents[project_index].get("title", "")
         else:
             # This page is directly under the root - it IS a project page
             return title

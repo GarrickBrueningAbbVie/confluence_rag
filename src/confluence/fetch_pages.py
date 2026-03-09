@@ -110,9 +110,10 @@ def fetch_all_pages():
             print(f"   Content HTML size: {len(page.content_html or '')} characters")
             print(f"   Content Text size: {len(page.content_text or '')} characters")
             print(f"   External links: {len(page.external_links)} links")
-            if page.parent_title:
-                print(f"   Parent: {page.parent_title} (ID: {page.parent_id})")
-            print(f"   Ancestors: {len(page.ancestors)} level(s)")
+            if page.parents:
+                immediate_parent = page.parents[-1]
+                print(f"   Parent: {immediate_parent.get('title', '')} (ID: {immediate_parent.get('id', '')})")
+            print(f"   Parents: {len(page.parents)} level(s)")
             print(f"   Children: {len(page.children)} page(s)")
             print(f"   URL: {page.url}")
             print()

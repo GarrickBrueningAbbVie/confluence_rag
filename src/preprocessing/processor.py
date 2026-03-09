@@ -362,7 +362,7 @@ class PreprocessingPipeline:
         Extract parent project using hierarchy only (no LLM needed).
 
         Args:
-            page_data: Page dictionary with ancestors
+            page_data: Page dictionary with parents
 
         Returns:
             Parent project name or None
@@ -379,27 +379,27 @@ class PreprocessingPipeline:
             title_lower = title.lower()
             return any(root.lower() in title_lower for root in DSA_PROJECT_ROOTS)
 
-        ancestors = page_data.get("ancestors", [])
+        parents = page_data.get("parents", [])
         title = page_data.get("title", "")
 
-        if not ancestors:
+        if not parents:
             return None
 
-        # Find the project root in ancestors
+        # Find the project root in parents
         root_index = None
-        for i, ancestor in enumerate(ancestors):
-            ancestor_title = ancestor.get("title", "")
-            if is_project_root(ancestor_title):
+        for i, parent in enumerate(parents):
+            parent_title = parent.get("title", "")
+            if is_project_root(parent_title):
                 root_index = i
                 break
 
         if root_index is None:
             return None
 
-        # The project name is the ancestor immediately after the root
+        # The project name is the parent immediately after the root
         project_index = root_index + 1
-        if project_index < len(ancestors):
-            return ancestors[project_index].get("title", "")
+        if project_index < len(parents):
+            return parents[project_index].get("title", "")
         else:
             return title
 
@@ -489,7 +489,7 @@ class PreprocessingPipeline:
 
     def _recalculate_depth(self, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Recalculate depth for all pages from ancestors.
+        Recalculate depth for all pages from parents.
 
         This ensures depth is always valid even if the original JSON
         has depth=None or incorrect values.
@@ -502,8 +502,8 @@ class PreprocessingPipeline:
         """
         updated = 0
         for page in pages:
-            ancestors = page.get("ancestors", [])
-            calculated_depth = len(ancestors) + 1
+            parents = page.get("parents", [])
+            calculated_depth = len(parents) + 1
             current_depth = page.get("depth")
 
             if current_depth is None or current_depth != calculated_depth:
@@ -530,7 +530,7 @@ class PreprocessingPipeline:
 
         Steps:
         1. Load pages from JSON
-        2. Recalculate depth from ancestors
+        2. Recalculate depth from parents
         3. Process attachments (optional, can be parallelized)
         4. Extract metadata (can be parallelized)
         5. Assess completeness
