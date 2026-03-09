@@ -2,10 +2,22 @@
 
 import sys
 from pathlib import Path
-import streamlit as st
 from typing import Dict, Any, Optional
 import json
 from loguru import logger
+
+# Configure loguru BEFORE importing anything else that uses it
+# This prevents "missing ScriptRunContext" warnings in Streamlit
+logger.remove()  # Remove default stderr handler
+logger.add(
+    sys.stderr,
+    format="{time:HH:mm:ss} | {level: <8} | {message}",
+    level="INFO",
+    enqueue=True,  # Thread-safe async logging
+    backtrace=False,
+)
+
+import streamlit as st
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
