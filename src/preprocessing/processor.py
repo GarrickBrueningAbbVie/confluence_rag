@@ -23,7 +23,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -403,6 +403,31 @@ class PreprocessingPipeline:
         else:
             return title
 
+    def _extract_main_project_basic(
+        self, page_data: Dict[str, Any]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Extract main project (depth 3 ancestor) using hierarchy only.
+
+        Args:
+            page_data: Page dictionary with parents
+
+        Returns:
+            Tuple of (main_project_name, main_project_id)
+        """
+        parents = page_data.get("parents", [])
+        depth = page_data.get("depth", len(parents) + 1)
+        title = page_data.get("title", "")
+        page_id = page_data.get("id", "")
+
+        if depth <= 2:
+            return (None, None)
+        if depth == 3:
+            return (title, page_id)
+        if len(parents) >= 3:
+            return (parents[2].get("title", ""), parents[2].get("id", ""))
+        return (None, None)
+
     def process_metadata(
         self,
         pages: List[Dict[str, Any]],
@@ -432,13 +457,20 @@ class PreprocessingPipeline:
         """
         logger.info(f"Extracting metadata for {len(pages)} pages")
 
-        # Always extract parent_project (doesn't need LLM)
+        # Always extract parent_project and main_project (doesn't need LLM)
         for page in pages:
             if page.get("parent_project") is None:
                 page["parent_project"] = self._extract_parent_project_basic(page)
 
+            if page.get("main_project") is None:
+                main_project, main_project_id = self._extract_main_project_basic(page)
+                page["main_project"] = main_project
+                page["main_project_id"] = main_project_id
+
         with_project = sum(1 for p in pages if p.get("parent_project"))
+        with_main = sum(1 for p in pages if p.get("main_project"))
         logger.info(f"  - {with_project}/{len(pages)} pages have parent_project")
+        logger.info(f"  - {with_main}/{len(pages)} pages have main_project")
 
         # Extract technologies only if LLM available and enabled
         if self.metadata_extractor and self.extract_technologies:

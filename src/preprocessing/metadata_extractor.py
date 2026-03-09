@@ -149,6 +149,56 @@ class MetadataExtractor:
             # This page is directly under the root - it IS a project page
             return title
 
+    def extract_main_project(
+        self,
+        page_data: Dict[str, Any],
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Extract main project name and ID (depth 3 ancestor).
+
+        DSA Hierarchy:
+        - Level 1: DSA (space root)
+        - Level 2: DSA Areas, DSA Products and Solutions, DSA Projects, etc.
+        - Level 3: Main project (e.g., ATLAS, ALFA) <- This is what we extract
+        - Level 4+: Subpages
+
+        Args:
+            page_data: Page dictionary with 'parents' list and 'depth'
+
+        Returns:
+            Tuple of (main_project_name, main_project_id)
+            Returns (None, None) for pages at depth 1-2
+
+        Example:
+            >>> name, id = extractor.extract_main_project(page_data)
+            >>> print(name)  # "ATLAS"
+        """
+        parents = page_data.get("parents", [])
+        depth = page_data.get("depth", len(parents) + 1)
+        title = page_data.get("title", "")
+        page_id = page_data.get("id", "")
+
+        if depth <= 2:
+            # Page is above project level (DSA root or category)
+            return (None, None)
+
+        if depth == 3:
+            # Page IS the main project
+            return (title, page_id)
+
+        # Depth 4+: Get depth-3 ancestor (index 2 in 0-based parents list)
+        # parents[0] = depth 1 (DSA root)
+        # parents[1] = depth 2 (category)
+        # parents[2] = depth 3 (main project)
+        if len(parents) >= 3:
+            main_project_parent = parents[2]
+            return (
+                main_project_parent.get("title", ""),
+                main_project_parent.get("id", ""),
+            )
+
+        return (None, None)
+
     def extract_technologies(
         self,
         content: str,
@@ -195,7 +245,9 @@ class MetadataExtractor:
         Process a single page to extract all metadata.
 
         Updates the page dictionary with:
-        - parent_project: Extracted project name
+        - parent_project: Extracted project name (from project root pattern)
+        - main_project: Main project name (depth 3 ancestor)
+        - main_project_id: Main project page ID
         - technologies: List of technologies (if extract_technologies=True)
 
         Args:
@@ -208,15 +260,23 @@ class MetadataExtractor:
         Example:
             >>> updated = extractor.process_page(page_data)
             >>> print(updated["parent_project"])
+            >>> print(updated["main_project"])
             >>> print(updated["technologies"])
         """
         title = page_data.get("title", "")
 
-        # Extract parent project
+        # Extract parent project (from project root pattern)
         parent_project = self.extract_parent_project(page_data)
         page_data["parent_project"] = parent_project
 
-        if parent_project:
+        # Extract main project (depth 3 ancestor)
+        main_project, main_project_id = self.extract_main_project(page_data)
+        page_data["main_project"] = main_project
+        page_data["main_project_id"] = main_project_id
+
+        if main_project:
+            logger.debug(f"Page '{title}' main project: {main_project}")
+        elif parent_project:
             logger.debug(f"Page '{title}' belongs to project: {parent_project}")
 
         # Extract technologies if requested
@@ -269,14 +329,18 @@ class MetadataExtractor:
                 title = page.get("title", "unknown")
                 logger.error(f"Failed to process page '{title}': {e}")
                 page.setdefault("parent_project", None)
+                page.setdefault("main_project", None)
+                page.setdefault("main_project_id", None)
                 page.setdefault("technologies", [])
 
         # Log summary
         with_project = sum(1 for p in pages if p.get("parent_project"))
+        with_main = sum(1 for p in pages if p.get("main_project"))
         with_tech = sum(1 for p in pages if p.get("technologies"))
 
         logger.info(f"Metadata extraction complete:")
         logger.info(f"  - {with_project}/{len(pages)} pages have parent_project")
+        logger.info(f"  - {with_main}/{len(pages)} pages have main_project")
         logger.info(f"  - {with_tech}/{len(pages)} pages have technologies")
 
         return pages
@@ -386,14 +450,20 @@ class MetadataExtractor:
             f"(workers={max_workers}, rps={rate_limit_rps}, batch={batch_size})"
         )
 
-        # First pass: Extract parent_project (fast, no API calls)
+        # First pass: Extract parent_project and main_project (fast, no API calls)
         # This can stay sequential since it's just dictionary lookups
         for page in pages:
             parent_project = self.extract_parent_project(page)
             page["parent_project"] = parent_project
 
+            main_project, main_project_id = self.extract_main_project(page)
+            page["main_project"] = main_project
+            page["main_project_id"] = main_project_id
+
         with_project = sum(1 for p in pages if p.get("parent_project"))
-        logger.info(f"Parent project extraction: {with_project}/{len(pages)} pages have projects")
+        with_main = sum(1 for p in pages if p.get("main_project"))
+        logger.info(f"Project extraction: {with_project}/{len(pages)} pages have parent_project")
+        logger.info(f"Project extraction: {with_main}/{len(pages)} pages have main_project")
 
         # Second pass: Extract technologies in parallel (LLM calls)
         if extract_technologies:
@@ -448,6 +518,7 @@ class MetadataExtractor:
         with_tech = sum(1 for p in pages if p.get("technologies"))
         logger.info(f"Metadata extraction complete (parallel):")
         logger.info(f"  - {with_project}/{len(pages)} pages have parent_project")
+        logger.info(f"  - {with_main}/{len(pages)} pages have main_project")
         logger.info(f"  - {with_tech}/{len(pages)} pages have technologies")
 
         return pages

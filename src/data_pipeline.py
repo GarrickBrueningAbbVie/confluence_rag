@@ -159,7 +159,10 @@ def preprocess_pages(
     for page in pages:
         parents = page.get("parents", [])
         title = page.get("title", "")
+        page_id = page.get("id", "")
+        depth = page.get("depth", len(parents) + 1)
 
+        # Extract parent_project (from project root pattern)
         parent_project = None
         if parents:
             root_index = None
@@ -176,13 +179,33 @@ def preprocess_pages(
                     parent_project = title
 
         page["parent_project"] = parent_project
+
+        # Extract main_project (depth 3 ancestor)
+        main_project = None
+        main_project_id = None
+        if depth <= 2:
+            # Page is above project level
+            pass
+        elif depth == 3:
+            # Page IS the main project
+            main_project = title
+            main_project_id = page_id
+        elif len(parents) >= 3:
+            # Get depth-3 ancestor (index 2 in 0-based list)
+            main_project = parents[2].get("title", "")
+            main_project_id = parents[2].get("id", "")
+
+        page["main_project"] = main_project
+        page["main_project_id"] = main_project_id
         page.setdefault("technologies", [])
         page.setdefault("attachments", [])
         page.setdefault("attachment_content", "")
 
-    # Count pages with parent projects
+    # Count pages with projects
     with_project = sum(1 for p in pages if p.get("parent_project"))
+    with_main = sum(1 for p in pages if p.get("main_project"))
     logger.info(f"  {with_project}/{len(pages)} pages have parent_project")
+    logger.info(f"  {with_main}/{len(pages)} pages have main_project")
 
     # Technology extraction
     if not skip_technologies:
