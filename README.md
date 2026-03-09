@@ -15,8 +15,11 @@ This project provides an intelligent question-answering system that:
 ## Features
 
 - **Confluence Integration**: Automatically fetches and parses project documentation from Confluence spaces
-- **Intelligent Preprocessing**: Extracts metadata including parent projects and page completeness scores
-- **Vector Search**: Uses ChromaDB and sentence transformers for efficient document retrieval
+- **Intelligent Preprocessing**: Extracts metadata including parent projects, main projects, and page completeness scores
+- **Two-Stage RAG**: Project-filtered retrieval that first identifies relevant projects, then searches within them
+- **Project Conglomeration**: Aggregates pages by main project for project-level retrieval and comparison
+- **Attachment Processing**: Merges attachment content into page content with LLM-based deduplication
+- **Vector Search**: Uses sentence transformers for efficient document retrieval with metadata filtering
 - **Database Pipeline**: Supports structured queries (counts, filters, aggregations) using pandas
 - **Query Routing**: Automatically routes queries to RAG, Database, or Hybrid pipelines based on intent
 - **RAG Pipeline**: Combines retrieval with Iliad API for accurate answer generation
@@ -25,7 +28,7 @@ This project provides an intelligent question-answering system that:
 - **Source Deduplication**: Intelligent grouping of sources by URL with document reference tracking
 - **Modern UI**: Streamlit-based interface with AbbVie styling and pipeline mode selection
 - **Extensible Architecture**: Well-structured, typed Python code following best practices
-- **Advanced Query Processing**: NLTK-powered keyword extraction and lemmatization
+- **Advanced Query Processing**: NLTK-powered keyword extraction and lemmatization with comparative query detection
 - **Composite Re-ranking**: Multi-signal scoring using page hierarchy, keyword matching, and similarity metrics
 - **Agent Framework**: Modular agent-based architecture for multi-step queries
 - **Multi-Step Queries**: Support for complex queries requiring multiple steps with context passing
@@ -49,7 +52,9 @@ confluence_rag/
 │   ├── preprocessing/                # Data preprocessing
 │   │   ├── processor.py              # Main preprocessing orchestrator
 │   │   ├── attachment_fetcher.py     # Fetch and process attachments
-│   │   ├── metadata_extractor.py     # Extract parent project, technologies
+│   │   ├── attachment_deduplicator.py # LLM-based duplicate attachment detection
+│   │   ├── metadata_extractor.py     # Extract parent project, main project, technologies
+│   │   ├── project_conglomerator.py  # Aggregate pages by main project
 │   │   └── completeness_assessor.py  # Assess page completeness (0-100)
 │   ├── database/                     # Database query pipeline
 │   │   ├── dataframe_loader.py       # Load JSON into pandas DataFrame
@@ -78,10 +83,11 @@ confluence_rag/
 │   │   └── code_executor.py          # Safe code execution
 │   ├── rag/                          # RAG pipeline components
 │   │   ├── embeddings.py             # Embedding generation
-│   │   ├── vectorstore.py            # Vector database management
+│   │   ├── vectorstore.py            # Vector database with metadata filtering
+│   │   ├── project_vectorstore.py    # Project-level vector database
 │   │   ├── vectorize_data.py         # Standalone vectorization script
-│   │   ├── pipeline.py               # Main RAG pipeline
-│   │   ├── query_processor.py        # Query preprocessing
+│   │   ├── pipeline.py               # Main RAG pipeline with two-stage retrieval
+│   │   ├── query_processor.py        # Query preprocessing with comparative detection
 │   │   └── reranker.py               # Document re-ranker
 │   └── ui/                           # Streamlit application
 │       └── app.py                    # Main UI with pipeline mode selection
@@ -95,7 +101,9 @@ confluence_rag/
 ├── Data_Storage/                     # Primary data storage (gitignored)
 │   ├── confluence_pages.json         # Raw Confluence data
 │   ├── confluence_pages_processed.json # Preprocessed data with metadata
-│   └── vector_db/                    # Vector database files
+│   ├── conglomerated_projects.json   # Pages aggregated by main project
+│   ├── vector_db/                    # Chunk-level vector database
+│   └── project_vector_db/            # Project-level vector database
 ├── requirements.txt                  # Python dependencies
 ├── Makefile                          # Development commands
 ├── .env.example                      # Environment variables template
@@ -167,12 +175,13 @@ python -m src.data_pipeline
 This single command will:
 1. Fetch all pages from Confluence
 2. Preprocess pages (extract metadata, calculate completeness scores)
-3. Generate embeddings and store in vector database
+3. Conglomerate pages by main project
+4. Generate embeddings and store in vector databases (chunk-level and project-level)
 
 ### Pipeline Options
 
 ```bash
-# Full pipeline (fetch + preprocess + vectorize)
+# Full pipeline (fetch + preprocess + conglomerate + vectorize)
 python -m src.data_pipeline
 
 # Only fetch from Confluence
@@ -181,11 +190,17 @@ python -m src.data_pipeline --fetch-only
 # Only preprocess existing data
 python -m src.data_pipeline --preprocess-only
 
+# Only conglomerate existing preprocessed data
+python -m src.data_pipeline --conglomerate-only
+
 # Only vectorize existing data
 python -m src.data_pipeline --vectorize-only
 
-# Skip completeness scoring (faster)
-python -m src.data_pipeline --skip-completeness
+# Enable attachment processing with deduplication
+python -m src.data_pipeline --with-attachments
+
+# Skip conglomeration step
+python -m src.data_pipeline --skip-conglomerate
 
 # Skip vectorization step
 python -m src.data_pipeline --skip-vectorize
@@ -331,6 +346,10 @@ result = smart_router.route("Describe ALFA and how many pages mention it")
 | `CHUNK_OVERLAP` | Chunk overlap | `200` |
 | `TOP_K_RESULTS` | Results to retrieve | `5` |
 | `ENABLE_DATABASE_PIPELINE` | Enable structured queries | `false` |
+| `CONGLOMERATED_JSON_PATH` | Conglomerated projects path | `./Data_Storage/conglomerated_projects.json` |
+| `PROJECT_VECTOR_DB_PATH` | Project vector DB location | `./Data_Storage/project_vector_db` |
+| `ENABLE_TWO_STAGE_RAG` | Use project-filtered retrieval | `true` |
+| `PROJECT_RETRIEVAL_TOP_K` | Projects to identify in stage 1 | `3` |
 
 ## Architecture
 
@@ -366,14 +385,17 @@ result = smart_router.route("Describe ALFA and how many pages mention it")
 
 | Component | Purpose |
 |-----------|---------|
-| `data_pipeline.py` | End-to-end data acquisition and processing |
+| `data_pipeline.py` | End-to-end data acquisition, preprocessing, and vectorization |
 | `ConfluenceRestClient` | REST API integration with Confluence |
 | `IliadClient` | Unified client for Iliad API (chat, analyze, recognize) |
-| `PreprocessingPipeline` | Metadata extraction and completeness assessment |
-| `VectorStore` | Vector database with numpy and pickle persistence |
+| `PreprocessingPipeline` | Metadata extraction, completeness assessment, attachment processing |
+| `ProjectConglomerator` | Aggregates pages by main project for project-level retrieval |
+| `AttachmentDeduplicator` | LLM-based duplicate attachment detection and compaction |
+| `VectorStore` | Chunk-level vector database with metadata filtering |
+| `ProjectVectorStore` | Project-level vector database for two-stage retrieval |
 | `DatabasePipeline` | Structured queries using pandas |
 | `QueryRouter` | Intelligent query routing based on intent |
-| `RAGPipeline` | Semantic search and answer generation |
+| `RAGPipeline` | Two-stage semantic search and answer generation |
 | `ChartGenerator` | Visualization generation using Plotly |
 | `display_answer` | Smart answer display with tables, charts, source deduplication |
 | `AgentOrchestrator` | Coordinates multi-agent execution for complex queries |
