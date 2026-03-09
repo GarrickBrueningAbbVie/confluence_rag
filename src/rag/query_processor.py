@@ -91,6 +91,13 @@ class ProcessedQuery:
     lemmatized_keywords: List[str]
     potential_project_names: List[str]
     potential_person_names: List[str]
+    is_comparative: bool = False
+    comparative_entities: List[str] = None
+
+    def __post_init__(self) -> None:
+        """Initialize default values for optional fields."""
+        if self.comparative_entities is None:
+            self.comparative_entities = []
 
 
 class QueryProcessor:
@@ -175,6 +182,9 @@ class QueryProcessor:
         if person_names:
             logger.info(f"Identified potential person names: {person_names}")
 
+        # Check for comparative queries
+        is_comparative, comparative_entities = self.is_comparative_query(query)
+
         result = ProcessedQuery(
             original_query=query,
             cleaned_query=cleaned,
@@ -182,6 +192,8 @@ class QueryProcessor:
             lemmatized_keywords=lemmatized,
             potential_project_names=project_names,
             potential_person_names=person_names,
+            is_comparative=is_comparative,
+            comparative_entities=comparative_entities,
         )
 
         logger.info(
@@ -406,6 +418,51 @@ class QueryProcessor:
                 person_names.append(full_name)
 
         return list(dict.fromkeys(person_names))
+
+    def is_comparative_query(self, query: str) -> Tuple[bool, List[str]]:
+        """
+        Detect if a query is comparative (comparing multiple projects/entities).
+
+        Args:
+            query: The user's query string.
+
+        Returns:
+            Tuple of (is_comparative, list of entities to compare).
+        """
+        query_lower = query.lower()
+
+        # Comparative patterns
+        comparative_patterns = [
+            r"compare\s+(\w+)\s+(?:to|with|and|vs\.?|versus)\s+(\w+)",
+            r"(\w+)\s+vs\.?\s+(\w+)",
+            r"difference(?:s)?\s+between\s+(\w+)\s+and\s+(\w+)",
+            r"how\s+does\s+(\w+)\s+differ\s+from\s+(\w+)",
+            r"(\w+)\s+versus\s+(\w+)",
+            r"similarities?\s+between\s+(\w+)\s+and\s+(\w+)",
+            r"(\w+)\s+or\s+(\w+)\s+(?:which|what)",
+        ]
+
+        for pattern in comparative_patterns:
+            match = re.search(pattern, query_lower, re.IGNORECASE)
+            if match:
+                entities = [g for g in match.groups() if g]
+                # Filter out common words that aren't entities
+                entities = [e for e in entities if e not in self.stop_words and len(e) > 2]
+                if len(entities) >= 2:
+                    logger.info(f"Detected comparative query with entities: {entities}")
+                    return (True, entities)
+
+        # Also check for acronyms being compared
+        acronym_pattern = re.compile(r"\b([A-Z]{2,6})\b")
+        acronyms = acronym_pattern.findall(query)
+        if len(acronyms) >= 2:
+            # Check if there's comparison language
+            comparison_words = ["compare", "vs", "versus", "difference", "differ", "or"]
+            if any(word in query_lower for word in comparison_words):
+                logger.info(f"Detected comparative query with acronyms: {acronyms}")
+                return (True, [a.lower() for a in acronyms])
+
+        return (False, [])
 
     def get_search_terms(self, processed_query: ProcessedQuery) -> List[str]:
         """

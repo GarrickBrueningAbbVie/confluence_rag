@@ -236,6 +236,79 @@ class VectorStore:
 
         return similarities
 
+    def query_with_filter(
+        self,
+        query_text: str,
+        n_results: int = 5,
+        filter_field: str = None,
+        filter_values: List[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Query the vector store with metadata filtering.
+
+        Args:
+            query_text: Query text to search for.
+            n_results: Number of results to return. Defaults to 5.
+            filter_field: Metadata field to filter on (e.g., 'main_project').
+            filter_values: List of allowed values for the filter field.
+
+        Returns:
+            Dictionary containing matched documents, distances, and metadatas.
+        """
+        if len(self.documents) == 0:
+            logger.warning("Vector store is empty")
+            return {
+                "documents": [],
+                "metadatas": [],
+                "distances": [],
+                "ids": [],
+            }
+
+        logger.info(f"Querying with filter: {filter_field}={filter_values}")
+
+        try:
+            # Generate embedding for query
+            query_embedding = self.embedding_manager.generate_embedding(query_text)
+
+            # Calculate cosine similarities
+            similarities = self._cosine_similarity(query_embedding, self.embeddings)
+
+            # Apply metadata filter if specified
+            if filter_field and filter_values:
+                # Create mask for documents matching filter
+                mask = np.array([
+                    meta.get(filter_field, "") in filter_values
+                    for meta in self.metadatas
+                ])
+                # Set similarity to -inf for non-matching documents
+                filtered_similarities = np.where(mask, similarities, -np.inf)
+            else:
+                filtered_similarities = similarities
+
+            # Get top k indices from filtered results
+            top_k = min(n_results, len(self.documents))
+            top_indices = np.argsort(filtered_similarities)[::-1][:top_k]
+
+            # Filter out indices with -inf similarity (filtered out)
+            valid_indices = [i for i in top_indices if filtered_similarities[i] != -np.inf]
+
+            # Convert similarity to distance (1 - similarity)
+            distances = [float(1 - similarities[i]) for i in valid_indices]
+
+            result = {
+                "documents": [self.documents[i] for i in valid_indices],
+                "metadatas": [self.metadatas[i] for i in valid_indices],
+                "distances": distances,
+                "ids": [self.ids[i] for i in valid_indices],
+            }
+
+            logger.info(f"Found {len(result['documents'])} matching documents after filtering")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error querying vector store with filter: {str(e)}")
+            raise
+
     def get_by_ids(self, ids: List[str]) -> Dict[str, Any]:
         """
         Retrieve documents by their IDs.

@@ -7,6 +7,7 @@ from rag.vectorstore import VectorStore
 from rag.embeddings import EmbeddingManager
 from rag.query_processor import QueryProcessor, ProcessedQuery
 from rag.reranker import DocumentReranker, RankingWeights
+from rag.project_vectorstore import ProjectVectorStore
 
 
 class RAGPipeline:
@@ -26,6 +27,9 @@ class RAGPipeline:
         top_k: int = 5,
         use_reranking: bool = True,
         ranking_weights: Optional[RankingWeights] = None,
+        project_store: Optional[ProjectVectorStore] = None,
+        enable_two_stage_rag: bool = True,
+        project_retrieval_top_k: int = 3,
     ) -> None:
         """
         Initialize the RAG pipeline.
@@ -38,6 +42,9 @@ class RAGPipeline:
             top_k: Number of relevant documents to retrieve. Defaults to 5.
             use_reranking: Whether to use composite scoring re-ranking. Defaults to True.
             ranking_weights: Custom weights for re-ranking. Uses defaults if None.
+            project_store: Optional ProjectVectorStore for two-stage retrieval.
+            enable_two_stage_rag: Whether to use two-stage project-filtered retrieval.
+            project_retrieval_top_k: Number of projects to identify in stage 1.
         """
         self.vector_store = vector_store
         self.embedding_manager = embedding_manager
@@ -45,6 +52,11 @@ class RAGPipeline:
         self.iliad_api_url = iliad_api_url
         self.top_k = top_k
         self.use_reranking = use_reranking
+
+        # Two-stage RAG configuration
+        self.project_store = project_store
+        self.enable_two_stage_rag = enable_two_stage_rag and project_store is not None
+        self.project_retrieval_top_k = project_retrieval_top_k
 
         # Initialize query processor for keyword extraction
         self.query_processor = QueryProcessor()
@@ -59,14 +71,96 @@ class RAGPipeline:
             self.reranker = None
 
         logger.info(
-            f"Initialized RAG pipeline (reranking: {use_reranking})"
+            f"Initialized RAG pipeline (reranking: {use_reranking}, "
+            f"two_stage: {self.enable_two_stage_rag})"
         )
+
+    def identify_relevant_projects(
+        self, query: str, n_results: Optional[int] = None
+    ) -> List[str]:
+        """
+        Stage 1: Identify relevant main projects for the query.
+
+        Args:
+            query: User's question or query.
+            n_results: Number of projects to retrieve. Defaults to project_retrieval_top_k.
+
+        Returns:
+            List of relevant main_project names.
+        """
+        if not self.project_store:
+            logger.warning("Project store not available for two-stage retrieval")
+            return []
+
+        n_results = n_results or self.project_retrieval_top_k
+
+        logger.info(f"Stage 1: Identifying top {n_results} relevant projects")
+
+        try:
+            project_results = self.project_store.query_projects(query, n_results=n_results)
+
+            if not project_results:
+                logger.warning("No projects found in stage 1")
+                return []
+
+            project_names = [p.get("main_project", "") for p in project_results]
+            project_names = [p for p in project_names if p]
+
+            logger.info(f"Stage 1 identified projects: {project_names}")
+            return project_names
+
+        except Exception as e:
+            logger.error(f"Error in stage 1 project identification: {str(e)}")
+            return []
+
+    def retrieve_filtered_by_project(
+        self,
+        query: str,
+        project_names: List[str],
+        n_results: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Stage 2: Retrieve documents filtered to specific projects.
+
+        Args:
+            query: User's question or query.
+            project_names: List of project names to filter by.
+            n_results: Number of documents to retrieve per project.
+
+        Returns:
+            Dictionary containing retrieved documents, metadatas, and distances.
+        """
+        n_results = n_results or self.top_k
+
+        logger.info(f"Stage 2: Retrieving from projects: {project_names}")
+
+        try:
+            # Use the vector store's filter capability
+            results = self.vector_store.query_with_filter(
+                query_text=query,
+                n_results=n_results,
+                filter_field="main_project",
+                filter_values=project_names,
+            )
+
+            logger.info(f"Stage 2 retrieved {len(results['documents'])} documents")
+            return results
+
+        except Exception as e:
+            logger.error(f"Error in stage 2 filtered retrieval: {str(e)}")
+            # Fallback to unfiltered query
+            logger.warning("Falling back to unfiltered query")
+            return self.vector_store.query(query_text=query, n_results=n_results)
 
     def retrieve_relevant_documents(
         self, query: str, n_results: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Retrieve relevant documents from the vector store with optional re-ranking.
+
+        Uses two-stage retrieval if enabled:
+        - Stage 1: Identify relevant projects using project vector store
+        - Stage 2: Retrieve chunks filtered to those projects
 
         Args:
             query: User's question or query.
@@ -82,16 +176,44 @@ class RAGPipeline:
         logger.info(
             f"Processed query - Keywords: {processed_query.keywords}, "
             f"Projects: {processed_query.potential_project_names}, "
-            f"People: {processed_query.potential_person_names}"
+            f"People: {processed_query.potential_person_names}, "
+            f"Comparative: {processed_query.is_comparative}"
         )
 
         # Retrieve more documents initially if re-ranking is enabled
         # This allows re-ranking to potentially surface better matches
         initial_retrieve = n_results * 3 if self.use_reranking else n_results
-        logger.info(f"Retrieving {initial_retrieve} documents for query (reranking: {self.use_reranking})")
 
         try:
-            results = self.vector_store.query(query_text=query, n_results=initial_retrieve)
+            # Use two-stage retrieval if enabled
+            if self.enable_two_stage_rag:
+                logger.info("Using two-stage RAG retrieval")
+
+                # Stage 1: Identify relevant projects
+                relevant_projects = self.identify_relevant_projects(query)
+
+                if relevant_projects:
+                    # Stage 2: Retrieve filtered by projects
+                    results = self.retrieve_filtered_by_project(
+                        query, relevant_projects, n_results=initial_retrieve
+                    )
+                    results['identified_projects'] = relevant_projects
+                else:
+                    # Fallback to unfiltered query if no projects identified
+                    logger.warning("No projects identified, using unfiltered query")
+                    results = self.vector_store.query(
+                        query_text=query, n_results=initial_retrieve
+                    )
+                    results['identified_projects'] = []
+            else:
+                logger.info(
+                    f"Retrieving {initial_retrieve} documents for query "
+                    f"(reranking: {self.use_reranking})"
+                )
+                results = self.vector_store.query(
+                    query_text=query, n_results=initial_retrieve
+                )
+
             logger.info(
                 f"Retrieved {len(results['documents'])} documents with "
                 f"distances: {results['distances'][:5]}..."  # Log first 5 distances
