@@ -26,6 +26,7 @@ from config import ConfigConfluenceRag
 from rag.vectorstore import VectorStore
 from rag.embeddings import EmbeddingManager
 from rag.pipeline import RAGPipeline
+from rag.project_vectorstore import ProjectVectorStore
 
 # Conditional imports for new features
 try:
@@ -233,34 +234,107 @@ def load_custom_css() -> None:
 
 
 @st.cache_resource
-def initialize_rag_pipeline() -> RAGPipeline:
-    """
-    Initialize and cache the RAG pipeline components.
-
-    Returns:
-        Initialized RAGPipeline instance.
-    """
-    logger.info("Initializing RAG pipeline for Streamlit app")
-
-    # Validate configuration
-    if not ConfigConfluenceRag.validate():
-        st.error("Configuration validation failed. Please check your .env file.")
-        st.stop()
-
-    # Initialize components
-    vector_store = VectorStore(
+def initialize_vector_store() -> VectorStore:
+    """Initialize and cache the vector store."""
+    logger.info("Initializing vector store")
+    return VectorStore(
         persist_directory=ConfigConfluenceRag.VECTOR_DB_PATH,
         collection_name="confluence_docs",
     )
 
-    embedding_manager = EmbeddingManager(model_name=ConfigConfluenceRag.EMBEDDING_MODEL)
+
+@st.cache_resource
+def initialize_project_store() -> Optional[ProjectVectorStore]:
+    """Initialize and cache the project vector store for two-stage RAG."""
+    logger.info("Initializing project vector store")
+    try:
+        project_store = ProjectVectorStore(
+            persist_directory=ConfigConfluenceRag.PROJECT_VECTOR_DB_PATH,
+            embedding_model=ConfigConfluenceRag.EMBEDDING_MODEL,
+        )
+        if project_store.count() > 0:
+            logger.info(f"Project store loaded with {project_store.count()} projects")
+            return project_store
+        else:
+            logger.warning("Project store is empty - two-stage RAG not available")
+            return None
+    except Exception as e:
+        logger.warning(f"Could not initialize project store: {e}")
+        return None
+
+
+@st.cache_resource
+def initialize_embedding_manager() -> EmbeddingManager:
+    """Initialize and cache the embedding manager."""
+    return EmbeddingManager(model_name=ConfigConfluenceRag.EMBEDDING_MODEL)
+
+
+def create_rag_pipeline(
+    vector_store: VectorStore,
+    embedding_manager: EmbeddingManager,
+    project_store: Optional[ProjectVectorStore] = None,
+    enable_two_stage: bool = True,
+    enable_reranking: bool = True,
+    project_top_k: int = 3,
+    top_k: int = 10,
+) -> RAGPipeline:
+    """
+    Create a RAG pipeline with configurable parameters.
+
+    Args:
+        vector_store: The vector store instance.
+        embedding_manager: The embedding manager instance.
+        project_store: Optional project vector store for two-stage RAG.
+        enable_two_stage: Whether to enable two-stage retrieval.
+        enable_reranking: Whether to enable document re-ranking.
+        project_top_k: Number of projects to identify in stage 1.
+        top_k: Number of documents to retrieve.
+
+    Returns:
+        Configured RAGPipeline instance.
+    """
+    # Validate configuration
+    if not ConfigConfluenceRag.validate():
+        st.error("Configuration validation failed. Please check your .env file.")
+        st.stop()
 
     pipeline = RAGPipeline(
         vector_store=vector_store,
         embedding_manager=embedding_manager,
         iliad_api_key=ConfigConfluenceRag.ILIAD_API_KEY,
         iliad_api_url=ConfigConfluenceRag.ILIAD_API_URL,
-        top_k=10,  # Default to 10 results as per requirements
+        top_k=top_k,
+        use_reranking=enable_reranking,
+        project_store=project_store if enable_two_stage else None,
+        enable_two_stage_rag=enable_two_stage,
+        project_retrieval_top_k=project_top_k,
+    )
+
+    return pipeline
+
+
+@st.cache_resource
+def initialize_rag_pipeline() -> RAGPipeline:
+    """
+    Initialize and cache the default RAG pipeline components.
+
+    Returns:
+        Initialized RAGPipeline instance.
+    """
+    logger.info("Initializing default RAG pipeline for Streamlit app")
+
+    vector_store = initialize_vector_store()
+    embedding_manager = initialize_embedding_manager()
+    project_store = initialize_project_store()
+
+    pipeline = create_rag_pipeline(
+        vector_store=vector_store,
+        embedding_manager=embedding_manager,
+        project_store=project_store,
+        enable_two_stage=ConfigConfluenceRag.ENABLE_TWO_STAGE_RAG,
+        enable_reranking=True,
+        project_top_k=ConfigConfluenceRag.PROJECT_RETRIEVAL_TOP_K,
+        top_k=10,
     )
 
     logger.info("RAG pipeline initialized successfully")
@@ -712,6 +786,62 @@ def main() -> None:
             help="Higher values provide more context but may be slower",
         )
 
+        # RAG Configuration Section
+        st.markdown("---")
+        st.markdown("## RAG Configuration")
+
+        # Check if project store is available
+        project_store = initialize_project_store()
+        project_store_available = project_store is not None and project_store.count() > 0
+
+        # Two-stage RAG toggle
+        enable_two_stage = st.checkbox(
+            "Enable Two-Stage RAG",
+            value=project_store_available and ConfigConfluenceRag.ENABLE_TWO_STAGE_RAG,
+            disabled=not project_store_available,
+            help="First identifies relevant projects, then searches within them" if project_store_available
+                 else "Not available - run data pipeline with conglomeration first",
+        )
+
+        # Project top-k slider (only show if two-stage enabled)
+        project_top_k = 3
+        if enable_two_stage and project_store_available:
+            project_top_k = st.slider(
+                "Projects to identify (Stage 1)",
+                min_value=1,
+                max_value=10,
+                value=ConfigConfluenceRag.PROJECT_RETRIEVAL_TOP_K,
+                help="Number of projects to identify before filtering chunks",
+            )
+
+        # Reranking toggle
+        enable_reranking = st.checkbox(
+            "Enable Re-ranking",
+            value=True,
+            help="Apply composite scoring to re-rank retrieved documents",
+        )
+
+        # Comparison mode toggle
+        st.markdown("---")
+        st.markdown("## Comparison Mode")
+        comparison_mode = st.checkbox(
+            "Enable Comparison Mode",
+            value=False,
+            help="Run query with different settings side-by-side",
+        )
+
+        if comparison_mode:
+            st.markdown("**Compare settings:**")
+            compare_two_stage = st.checkbox(
+                "Compare: Two-Stage vs Standard",
+                value=True,
+                disabled=not project_store_available,
+            )
+            compare_reranking = st.checkbox(
+                "Compare: With vs Without Re-ranking",
+                value=False,
+            )
+
         # Pipeline mode selection (if advanced features available)
         pipeline_mode = "auto"
         if ADVANCED_FEATURES_AVAILABLE:
@@ -734,10 +864,27 @@ def main() -> None:
             """
             )
 
-    # Initialize RAG pipeline
+    # Initialize base components
     try:
-        rag_pipeline = initialize_rag_pipeline()
-        rag_pipeline.top_k = top_k
+        vector_store = initialize_vector_store()
+        embedding_manager = initialize_embedding_manager()
+        # project_store already initialized in sidebar
+    except Exception as e:
+        st.error(f"Error initializing components: {str(e)}")
+        logger.error(f"Failed to initialize components: {str(e)}")
+        st.stop()
+
+    # Create RAG pipeline with current settings
+    try:
+        rag_pipeline = create_rag_pipeline(
+            vector_store=vector_store,
+            embedding_manager=embedding_manager,
+            project_store=project_store if enable_two_stage else None,
+            enable_two_stage=enable_two_stage,
+            enable_reranking=enable_reranking,
+            project_top_k=project_top_k,
+            top_k=top_k,
+        )
     except Exception as e:
         st.error(f"Error initializing RAG pipeline: {str(e)}")
         logger.error(f"Failed to initialize pipeline: {str(e)}")
@@ -764,15 +911,20 @@ def main() -> None:
         st.stop()
 
     # Status indicators
-    status_col1, status_col2 = st.columns(2)
+    status_col1, status_col2, status_col3 = st.columns(3)
     with status_col1:
-        st.info(f"📚 Vector database: {doc_count} document chunks")
+        st.info(f"📚 Chunks: {doc_count}")
     with status_col2:
+        if project_store_available:
+            st.success(f"🎯 Projects: {project_store.count()}")
+        else:
+            st.warning("🎯 Projects: Not available")
+    with status_col3:
         if db_pipeline:
             stats = db_pipeline.get_stats()
-            st.info(f"📊 Database: {stats['total_pages']} pages")
+            st.info(f"📊 Pages: {stats['total_pages']}")
         elif ADVANCED_FEATURES_AVAILABLE:
-            st.info("📊 Database pipeline: Not enabled")
+            st.info("📊 DB: Not enabled")
 
     # Main query interface
     st.markdown("---")
@@ -813,76 +965,202 @@ def main() -> None:
 
     # Process query
     if question:
-        with st.spinner("🔍 Searching for relevant information..."):
-            try:
-                # Route based on selected mode
-                if query_router and pipeline_mode != "rag":
-                    # Use query router
-                    force_intent = None
-                    if pipeline_mode == "database":
-                        force_intent = QueryIntent.DATABASE
-                    elif pipeline_mode == "hybrid":
-                        force_intent = QueryIntent.HYBRID
+        # Check if comparison mode is enabled
+        if comparison_mode and (compare_two_stage or compare_reranking):
+            st.markdown("---")
+            st.markdown("## Comparison Results")
 
-                    result = query_router.route(
-                        question,
-                        force_intent=force_intent,
-                        return_metadata=True,
-                    )
+            # Build list of configurations to compare
+            configs = []
 
-                    st.markdown("---")
+            if compare_two_stage and project_store_available:
+                configs.append({
+                    "name": "Two-Stage RAG",
+                    "two_stage": True,
+                    "reranking": enable_reranking,
+                })
+                configs.append({
+                    "name": "Standard RAG",
+                    "two_stage": False,
+                    "reranking": enable_reranking,
+                })
+            elif compare_reranking:
+                configs.append({
+                    "name": "With Re-ranking",
+                    "two_stage": enable_two_stage,
+                    "reranking": True,
+                })
+                configs.append({
+                    "name": "Without Re-ranking",
+                    "two_stage": enable_two_stage,
+                    "reranking": False,
+                })
+            else:
+                # Fallback to current settings
+                configs.append({
+                    "name": "Current Settings",
+                    "two_stage": enable_two_stage,
+                    "reranking": enable_reranking,
+                })
 
-                    # Display routing info
-                    display_routing_info(result)
+            # Create columns for side-by-side comparison
+            cols = st.columns(len(configs))
 
-                    # Display answer
-                    display_answer(result, show_routing=True)
+            for idx, (col, config) in enumerate(zip(cols, configs)):
+                with col:
+                    st.markdown(f"### {config['name']}")
 
-                    # Display chart if applicable
-                    display_chart(result)
+                    # Show config details
+                    config_details = []
+                    if config["two_stage"]:
+                        config_details.append(f"Two-Stage (top {project_top_k} projects)")
+                    else:
+                        config_details.append("Standard retrieval")
+                    if config["reranking"]:
+                        config_details.append("Re-ranking ON")
+                    else:
+                        config_details.append("Re-ranking OFF")
+                    st.caption(" | ".join(config_details))
 
-                else:
-                    # Use RAG pipeline directly
-                    result = rag_pipeline.query(question, n_results=top_k)
+                    with st.spinner(f"Running {config['name']}..."):
+                        try:
+                            # Create pipeline with this config
+                            test_pipeline = create_rag_pipeline(
+                                vector_store=vector_store,
+                                embedding_manager=embedding_manager,
+                                project_store=project_store if config["two_stage"] else None,
+                                enable_two_stage=config["two_stage"],
+                                enable_reranking=config["reranking"],
+                                project_top_k=project_top_k,
+                                top_k=top_k,
+                            )
 
-                    st.markdown("---")
-                    display_answer(result)
+                            # Run query
+                            result = test_pipeline.query(question, n_results=top_k)
 
-                # Debug information
-                with st.expander("🔧 Debug Information"):
-                    debug_info = {
-                        "question": question,
-                        "pipeline_mode": pipeline_mode,
-                        "num_sources": len(result.get("sources", [])),
-                    }
+                            # Display answer (simplified for comparison)
+                            st.markdown("**Answer:**")
+                            answer = result.get("answer", "")
+                            if len(answer) > 500:
+                                st.markdown(answer[:500] + "...")
+                            else:
+                                st.markdown(answer)
 
-                    if result.get("distances"):
-                        debug_info["distances"] = result["distances"]
+                            # Show identified projects if two-stage
+                            if config["two_stage"] and result.get("identified_projects"):
+                                st.markdown("**Projects identified:**")
+                                st.write(result["identified_projects"])
 
-                    if result.get("query"):
-                        debug_info["generated_query"] = result["query"]
+                            # Show top sources
+                            if result.get("sources"):
+                                st.markdown("**Top Sources:**")
+                                for i, src in enumerate(result["sources"][:3], 1):
+                                    st.markdown(f"{i}. {src.get('title', 'Unknown')[:40]}")
 
-                    if result.get("metadata"):
-                        debug_info["routing_metadata"] = result["metadata"]
+                            # Show distances
+                            if result.get("distances"):
+                                avg_dist = sum(result["distances"][:5]) / min(5, len(result["distances"]))
+                                st.metric("Avg Distance (top 5)", f"{avg_dist:.3f}")
 
-                    # Show source structure for debugging
-                    sources = result.get("sources", [])
-                    if sources:
-                        debug_info["sources_sample"] = [
-                            {
-                                "has_document_index": "document_index" in s,
-                                "document_index": s.get("document_index"),
-                                "title": s.get("title", "")[:50],
-                                "keys": list(s.keys()),
-                            }
-                            for s in sources[:5]
-                        ]
+                        except Exception as e:
+                            st.error(f"Error: {str(e)}")
 
-                    st.json(debug_info)
+        else:
+            # Standard single-query mode
+            with st.spinner("🔍 Searching for relevant information..."):
+                try:
+                    # Route based on selected mode
+                    if query_router and pipeline_mode != "rag":
+                        # Use query router
+                        force_intent = None
+                        if pipeline_mode == "database":
+                            force_intent = QueryIntent.DATABASE
+                        elif pipeline_mode == "hybrid":
+                            force_intent = QueryIntent.HYBRID
 
-            except Exception as e:
-                st.error(f"Error processing query: {str(e)}")
-                logger.error(f"Query processing error: {str(e)}")
+                        result = query_router.route(
+                            question,
+                            force_intent=force_intent,
+                            return_metadata=True,
+                        )
+
+                        st.markdown("---")
+
+                        # Display routing info
+                        display_routing_info(result)
+
+                        # Display answer
+                        display_answer(result, show_routing=True)
+
+                        # Display chart if applicable
+                        display_chart(result)
+
+                    else:
+                        # Use RAG pipeline directly
+                        result = rag_pipeline.query(question, n_results=top_k)
+
+                        st.markdown("---")
+
+                        # Show current RAG config
+                        config_info = []
+                        if enable_two_stage:
+                            config_info.append(f"Two-Stage RAG (top {project_top_k} projects)")
+                            if result.get("identified_projects"):
+                                config_info.append(f"Identified: {result['identified_projects']}")
+                        else:
+                            config_info.append("Standard RAG")
+                        if enable_reranking:
+                            config_info.append("Re-ranking enabled")
+
+                        st.info(" | ".join(config_info))
+
+                        display_answer(result)
+
+                    # Debug information
+                    with st.expander("🔧 Debug Information"):
+                        debug_info = {
+                            "question": question,
+                            "pipeline_mode": pipeline_mode,
+                            "rag_config": {
+                                "two_stage_enabled": enable_two_stage,
+                                "reranking_enabled": enable_reranking,
+                                "project_top_k": project_top_k if enable_two_stage else "N/A",
+                                "top_k": top_k,
+                            },
+                            "num_sources": len(result.get("sources", [])),
+                        }
+
+                        if result.get("identified_projects"):
+                            debug_info["identified_projects"] = result["identified_projects"]
+
+                        if result.get("distances"):
+                            debug_info["distances"] = result["distances"]
+
+                        if result.get("query"):
+                            debug_info["generated_query"] = result["query"]
+
+                        if result.get("metadata"):
+                            debug_info["routing_metadata"] = result["metadata"]
+
+                        # Show source structure for debugging
+                        sources = result.get("sources", [])
+                        if sources:
+                            debug_info["sources_sample"] = [
+                                {
+                                    "has_document_index": "document_index" in s,
+                                    "document_index": s.get("document_index"),
+                                    "title": s.get("title", "")[:50],
+                                    "main_project": s.get("main_project", ""),
+                                    "keys": list(s.keys()),
+                                }
+                                for s in sources[:5]
+                            ]
+
+                        st.json(debug_info)
+
+                except Exception as e:
+                    st.error(f"Error processing query: {str(e)}")
+                    logger.error(f"Query processing error: {str(e)}")
 
     # Footer
     st.markdown("---")
