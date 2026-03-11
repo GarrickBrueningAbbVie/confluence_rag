@@ -190,6 +190,13 @@ class VectorStore:
             # Calculate cosine similarities
             similarities = self._cosine_similarity(query_embedding, self.embeddings)
 
+            # DEBUG: Check similarity distribution
+            logger.info(
+                f"Similarity stats - min: {similarities.min():.4f}, "
+                f"max: {similarities.max():.4f}, mean: {similarities.mean():.4f}, "
+                f"std: {similarities.std():.4f}"
+            )
+
             # Get top k indices
             top_k = min(n_results, len(self.documents))
             top_indices = np.argsort(similarities)[::-1][:top_k]
@@ -273,6 +280,13 @@ class VectorStore:
             # Calculate cosine similarities
             similarities = self._cosine_similarity(query_embedding, self.embeddings)
 
+            # DEBUG: Check similarity distribution before filtering
+            logger.info(
+                f"Similarity stats (before filter) - min: {similarities.min():.4f}, "
+                f"max: {similarities.max():.4f}, mean: {similarities.mean():.4f}, "
+                f"std: {similarities.std():.4f}"
+            )
+
             # Apply metadata filter if specified
             if filter_field and filter_values:
                 # Create mask for documents matching filter
@@ -280,6 +294,13 @@ class VectorStore:
                     meta.get(filter_field, "") in filter_values
                     for meta in self.metadatas
                 ])
+                matching_count = mask.sum()
+                logger.info(f"Filter matched {matching_count}/{len(self.documents)} documents")
+
+                # DEBUG: Show what projects are in the store
+                unique_projects = set(meta.get(filter_field, "") for meta in self.metadatas)
+                logger.debug(f"Unique {filter_field} values in store: {list(unique_projects)[:10]}...")
+
                 # Set similarity to -inf for non-matching documents
                 filtered_similarities = np.where(mask, similarities, -np.inf)
             else:

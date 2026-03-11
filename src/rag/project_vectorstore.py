@@ -254,11 +254,24 @@ class ProjectVectorStore:
         # Generate query embedding
         query_embedding = self.embedding_manager.generate_embedding(query)
 
+        # DEBUG: Check embedding shapes and values
+        logger.debug(f"Query embedding shape: {query_embedding.shape}, norm: {np.linalg.norm(query_embedding):.4f}")
+        logger.debug(f"Store embeddings shape: {self.embeddings.shape}")
+        logger.debug(f"Total projects in store: {len(self.documents)}")
+
         # Compute cosine similarity
         query_norm = query_embedding / (np.linalg.norm(query_embedding) + 1e-10)
         embedding_norms = np.linalg.norm(self.embeddings, axis=1, keepdims=True) + 1e-10
         normalized_embeddings = self.embeddings / embedding_norms
         similarities = np.dot(normalized_embeddings, query_norm)
+
+        # DEBUG: Check similarity distribution
+        logger.info(
+            f"Similarity stats - min: {similarities.min():.4f}, "
+            f"max: {similarities.max():.4f}, "
+            f"mean: {similarities.mean():.4f}, "
+            f"std: {similarities.std():.4f}"
+        )
 
         # Get top-k results
         top_k = min(n_results, len(self.documents))
@@ -318,6 +331,17 @@ class ProjectVectorStore:
 
     def __len__(self) -> int:
         """Return number of projects in store."""
+        return len(self.documents)
+
+    def count(self) -> int:
+        """Return number of projects in store.
+
+        Returns:
+            Number of projects stored
+
+        Example:
+            >>> print(f"Store has {store.count()} projects")
+        """
         return len(self.documents)
 
     def __contains__(self, project_name: str) -> bool:

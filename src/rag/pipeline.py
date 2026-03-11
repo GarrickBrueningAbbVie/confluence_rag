@@ -103,6 +103,16 @@ class RAGPipeline:
                 logger.warning("No projects found in stage 1")
                 return []
 
+            # DEBUG: Log detailed project results with similarity scores
+            logger.info("--- Stage 1 Project Retrieval Results ---")
+            for i, p in enumerate(project_results, 1):
+                logger.info(
+                    f"  {i}. {p.get('main_project', 'Unknown')}: "
+                    f"similarity={p.get('similarity', 0):.4f}, "
+                    f"pages={p.get('page_count', 0)}"
+                )
+            logger.info("-" * 40)
+
             project_names = [p.get("main_project", "") for p in project_results]
             project_names = [p for p in project_names if p]
 
@@ -218,6 +228,21 @@ class RAGPipeline:
                 f"Retrieved {len(results['documents'])} documents with "
                 f"distances: {results['distances'][:5]}..."  # Log first 5 distances
             )
+
+            # DEBUG: Log detailed top 5 document info
+            logger.info("--- Top 5 Retrieved Documents ---")
+            for i in range(min(5, len(results['documents']))):
+                meta = results['metadatas'][i] if i < len(results['metadatas']) else {}
+                dist = results['distances'][i] if i < len(results['distances']) else 0
+                logger.info(
+                    f"  {i+1}. Title: {meta.get('title', 'Unknown')[:50]}"
+                )
+                logger.info(
+                    f"      Project: {meta.get('main_project', 'N/A')}, "
+                    f"Distance: {dist:.4f}, "
+                    f"Chunk: {meta.get('chunk_index', 'N/A')}"
+                )
+            logger.info("-" * 40)
 
             # Apply re-ranking if enabled
             if self.use_reranking and self.reranker and len(results['documents']) > 0:
@@ -417,7 +442,11 @@ Please provide a clear, accurate answer based on the context provided."""
         Returns:
             Dictionary containing answer, source documents, and metadata.
         """
-        logger.info(f"Processing query: {question}")
+        # === DEBUG SEPARATOR ===
+        logger.info("=" * 80)
+        logger.info(f"NEW QUERY: {question}")
+        logger.info(f"Settings: two_stage={self.enable_two_stage_rag}, reranking={self.use_reranking}, top_k={self.top_k}")
+        logger.info("=" * 80)
 
         try:
             # Step 1: Retrieve relevant documents (with re-ranking if enabled)
