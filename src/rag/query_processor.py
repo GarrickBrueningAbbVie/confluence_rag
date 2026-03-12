@@ -1,84 +1,32 @@
-"""Query preprocessing module for keyword extraction and query cleaning.
+"""Query preprocessing module for keyword extraction and query analysis.
 
-This module provides functionality to extract keywords from user queries
-for improved document retrieval and re-ranking.
+This module provides functionality to extract structured information from user queries
+using LLM-based analysis for improved document retrieval and re-ranking.
+
+Uses the Iliad API for intelligent extraction of:
+- Keywords and key phrases
+- Project names and acronyms
+- Person names
+- Dates and time references
+- Query intent and comparison detection
 """
 
+import json
 import re
-from typing import List, Set, Tuple
-from dataclasses import dataclass
+from typing import Any, List, Optional, Tuple
+from dataclasses import dataclass, field
 from loguru import logger
 
-# Use NLTK for stop words and lemmatization
+# Runtime imports - IliadClient is optional
+ILIAD_AVAILABLE = False
+IliadClient: Any = None
+IliadClientConfig: Any = None
+
 try:
-    import nltk
-    from nltk.corpus import stopwords
-    from nltk.tokenize import word_tokenize
-    from nltk.stem import WordNetLemmatizer
-
-    # Download required NLTK data (only if not already present)
-    try:
-        nltk.data.find("tokenizers/punkt")
-    except LookupError:
-        nltk.download("punkt", quiet=True)
-
-    try:
-        nltk.data.find("tokenizers/punkt_tab")
-    except LookupError:
-        nltk.download("punkt_tab", quiet=True)
-
-    try:
-        nltk.data.find("corpora/stopwords")
-    except LookupError:
-        nltk.download("stopwords", quiet=True)
-
-    try:
-        nltk.data.find("corpora/wordnet")
-    except LookupError:
-        nltk.download("wordnet", quiet=True)
-
-    NLTK_AVAILABLE = True
-    ENGLISH_STOP_WORDS: Set[str] = set(stopwords.words("english"))
-    logger.info("NLTK loaded successfully for query processing")
+    from iliad.client import IliadClient, IliadClientConfig
+    ILIAD_AVAILABLE = True
 except ImportError:
-    NLTK_AVAILABLE = False
-    # Fallback stop words if NLTK is not available
-    ENGLISH_STOP_WORDS: Set[str] = {
-        "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-        "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
-        "be", "have", "has", "had", "do", "does", "did", "will", "would",
-        "could", "should", "may", "might", "must", "shall", "can", "need",
-        "what", "which", "who", "whom", "this", "that", "these", "those",
-        "am", "it", "its", "my", "your", "his", "her", "our", "their",
-        "me", "him", "them", "us", "about", "into", "through", "during",
-    }
-    logger.warning("NLTK not available, using fallback stop words")
-
-# Additional domain-specific stop words
-ADDITIONAL_STOP_WORDS: Set[str] = {
-    "tell", "please", "help", "find", "give", "get", "know", "let", "make",
-    "see", "look", "show", "using", "used", "work", "working", "works",
-    "question", "answer", "explain", "describe", "information", "details",
-}
-
-# Question patterns to remove
-QUESTION_PATTERNS: List[str] = [
-    r"^what\s+(is|are|was|were)\s+",
-    r"^who\s+(is|are|was|were)\s+",
-    r"^where\s+(is|are|was|were)\s+",
-    r"^when\s+(is|are|was|were)\s+",
-    r"^how\s+(do|does|did|is|are|can|could|would|should)\s+",
-    r"^can\s+you\s+(tell|show|help|explain|describe)\s+",
-    r"^could\s+you\s+(tell|show|help|explain|describe)\s+",
-    r"^please\s+(tell|show|help|explain|describe)\s+",
-    r"^tell\s+me\s+about\s+",
-    r"^explain\s+",
-    r"^describe\s+",
-    r"^what\s+does\s+",
-    r"^what\s+do\s+",
-    r"^i\s+want\s+to\s+(know|learn|understand)\s+about\s+",
-    r"^i\s+need\s+to\s+(know|learn|understand)\s+about\s+",
-]
+    pass
 
 
 @dataclass
@@ -92,336 +40,546 @@ class ProcessedQuery:
     potential_project_names: List[str]
     potential_person_names: List[str]
     is_comparative: bool = False
-    comparative_entities: List[str] = None
+    comparative_entities: List[str] = field(default_factory=list)
+    dates: List[str] = field(default_factory=list)
+    technologies: List[str] = field(default_factory=list)
+    query_intent: str = "informational"
+    confidence: float = 0.0
 
     def __post_init__(self) -> None:
         """Initialize default values for optional fields."""
         if self.comparative_entities is None:
             self.comparative_entities = []
+        if self.dates is None:
+            self.dates = []
+        if self.technologies is None:
+            self.technologies = []
+
+
+# Few-shot examples for query analysis
+FEW_SHOT_EXAMPLES = """
+
+Example 0:
+Query: "What is passport?"
+Output:
+{
+    "cleaned_query": "what is passport",
+    "keywords": ["passport"],
+    "project_names": ["passport"],
+    "person_names": [],
+    "dates": [],
+    "technologies": [],
+    "is_comparative": false,
+    "comparative_entities": [],
+    "query_intent": "informational"
+}
+
+Example 1:
+Query: "What is the ALFA project and who is working on it?"
+Output:
+{
+    "cleaned_query": "ALFA project who is working on it",
+    "keywords": ["ALFA", "project", "working"],
+    "project_names": ["ALFA"],
+    "person_names": [],
+    "dates": [],
+    "technologies": [],
+    "is_comparative": false,
+    "comparative_entities": [],
+    "query_intent": "informational"
+}
+
+Example 2:
+Query: "Compare the GraphRAG approach to traditional RAG for document retrieval"
+Output:
+{
+    "cleaned_query": "GraphRAG approach traditional RAG document retrieval",
+    "keywords": ["GraphRAG", "traditional", "RAG", "document", "retrieval"],
+    "project_names": ["GraphRAG"],
+    "person_names": [],
+    "dates": [],
+    "technologies": ["RAG", "GraphRAG"],
+    "is_comparative": true,
+    "comparative_entities": ["GraphRAG", "traditional RAG"],
+    "query_intent": "comparison"
+}
+
+Example 3:
+Query: "What projects did John Smith work on in 2024 using Python and Airflow?"
+Output:
+{
+    "cleaned_query": "projects John Smith work 2024 Python Airflow",
+    "keywords": ["projects", "work", "Python", "Airflow"],
+    "project_names": [],
+    "person_names": ["John Smith"],
+    "dates": ["2024"],
+    "technologies": ["Python", "Airflow"],
+    "is_comparative": false,
+    "comparative_entities": [],
+    "query_intent": "informational"
+}
+
+Example 4:
+Query: "What are the data sources for the missing data KRI."
+Output:
+{
+    "cleaned_query": "data source for missing data KRI",
+    "keywords": ["data source"],
+    "project_names": ["misisng data KRI"],
+    "person_names": [""],
+    "dates": [""],
+    "technologies": ["data"],
+    "is_comparative": false,
+    "comparative_entities": [],
+    "query_intent": ""
+}
+
+
+Example 5:
+Query: "Compare the methods of clover to convoke"
+Output:
+{
+    "cleaned_query": "compare method of clover and convoke",
+    "keywords": ["compare", "method"],
+    "project_names": ["clover", "convoke"],
+    "person_names": [""],
+    "dates": [""],
+    "technologies": [""],
+    "is_comparative": true,
+    "comparative_entities": ["clover","convoke"],
+    "query_intent": "comparitive"
+}
+
+"""
+
+QUERY_ANALYSIS_PROMPT = """You are a query analysis assistant for a data science documentation system.
+Your task is to extract structured information from user queries to improve search and retrieval.
+
+Analyze the query and extract the following information:
+- cleaned_query: The query with question words removed (what, how, etc.) but keeping important terms
+- keywords: Important search terms (nouns, verbs, technical terms) - lowercase unless acronym
+- project_names: Names of projects mentioned (often acronyms like ALFA, DSA, ATLAS or capitalized names)
+- person_names: Full names of people mentioned (First Last format)
+- dates: Any date references (years, quarters, months, date ranges)
+- technologies: Programming languages, tools, frameworks, methodologies mentioned
+- is_comparative: Boolean - true if query compares multiple things
+- comparative_entities: If comparative, the things being compared
+- query_intent: One of "informational", "comparison", "aggregation", "listing", "how-to"
+
+Important guidelines:
+- Project names can be acronyms (2-6 capital letters) or capitalized proper nouns
+- Distinguish between project names and technology names (Python is technology, ALFA is project)
+- Person names generally follow a First Last convenction, but can take other formats. (Smith, John == John Smith)
+- Dates can be years (2024), quarters (Q1 2025), months (January 2024), or ranges
+- Query intent helps route to appropriate search pipeline
+
+{examples}
+
+Now analyze this query:
+Query: "{query}"
+
+Respond with ONLY valid JSON matching this schema:
+{{
+    "cleaned_query": "string",
+    "keywords": ["string"],
+    "project_names": ["string"],
+    "person_names": ["string"],
+    "dates": ["string"],
+    "technologies": ["string"],
+    "is_comparative": boolean,
+    "comparative_entities": ["string"],
+    "query_intent": "string"
+}}
+"""
 
 
 class QueryProcessor:
     """
-    Processes user queries to extract keywords and clean text.
+    Processes user queries to extract structured information using LLM.
 
     This class provides methods to:
-    - Remove stop words and question phrases
-    - Lemmatize words to their base form
-    - Extract key terms and potential entity names
-    - Identify potential project names and person names
+    - Extract keywords, entities, and metadata from queries
+    - Identify projects, people, dates, and technologies
+    - Detect comparative queries
+    - Clean queries for improved search
+
+    Uses the Iliad API for intelligent extraction with few-shot prompting.
+    Falls back to regex-based extraction if LLM is unavailable.
     """
 
     def __init__(
         self,
-        additional_stop_words: Set[str] = None,
-        min_keyword_length: int = 2,
-        use_lemmatization: bool = True,
+        iliad_client: Optional[Any] = None,
+        model: str = "gpt-4o-mini-global",
+        use_llm: bool = True,
+        use_few_shot: bool = True,
     ) -> None:
         """
         Initialize the query processor.
 
         Args:
-            additional_stop_words: Additional words to filter out.
-            min_keyword_length: Minimum character length for keywords.
-            use_lemmatization: Whether to lemmatize keywords.
+            iliad_client: Optional pre-configured Iliad client.
+            model: Model to use for LLM extraction.
+            use_llm: Whether to use LLM-based extraction (falls back to regex if False).
+            use_few_shot: Whether to include few-shot examples in prompt.
         """
-        self.stop_words = ENGLISH_STOP_WORDS.copy()
-        self.stop_words.update(ADDITIONAL_STOP_WORDS)
-        if additional_stop_words:
-            self.stop_words.update(additional_stop_words)
+        self.iliad_client = iliad_client
+        self.model = model
+        self.use_llm = use_llm
+        self.use_few_shot = use_few_shot
 
-        self.min_keyword_length = min_keyword_length
-        self.use_lemmatization = use_lemmatization and NLTK_AVAILABLE
-        self.question_patterns = [re.compile(p, re.IGNORECASE) for p in QUESTION_PATTERNS]
-
-        # Initialize lemmatizer if available
-        if self.use_lemmatization:
-            self.lemmatizer = WordNetLemmatizer()
-        else:
-            self.lemmatizer = None
+        # Try to initialize client from environment if not provided
+        if self.iliad_client is None and use_llm and ILIAD_AVAILABLE:
+            try:
+                config = IliadClientConfig.from_env()
+                self.iliad_client = IliadClient(config)
+                logger.info("Initialized Iliad client from environment")
+            except (ValueError, Exception) as e:
+                logger.warning(f"Could not initialize Iliad client: {e}")
+                self.use_llm = False
 
         logger.info(
-            f"QueryProcessor initialized (NLTK: {NLTK_AVAILABLE}, "
-            f"Lemmatization: {self.use_lemmatization}, "
-            f"Stop words count: {len(self.stop_words)})"
+            f"QueryProcessor initialized (LLM: {self.use_llm and self.iliad_client is not None}, "
+            f"Model: {model}, Few-shot: {use_few_shot})"
         )
 
     def process_query(self, query: str) -> ProcessedQuery:
         """
-        Process a user query to extract keywords and clean text.
+        Process a user query to extract structured information.
 
         Args:
             query: The original user query.
 
         Returns:
-            ProcessedQuery object containing cleaned query and extracted info.
+            ProcessedQuery object containing extracted information.
         """
         logger.info(f"Processing query: '{query}'")
 
-        # Clean the query
+        # Try LLM-based extraction first
+        if self.use_llm and self.iliad_client is not None:
+            try:
+                result = self._extract_with_llm(query)
+                if result is not None:
+                    logger.info(
+                        f"LLM extraction successful - "
+                        f"Keywords: {len(result.keywords)}, "
+                        f"Projects: {len(result.potential_project_names)}, "
+                        f"People: {len(result.potential_person_names)}"
+                    )
+                    return result
+            except Exception as e:
+                logger.warning(f"LLM extraction failed: {e}, falling back to regex")
+
+        # Fallback to regex-based extraction
+        logger.info("Using regex-based extraction")
+        return self._extract_with_regex(query)
+
+    def _extract_with_llm(self, query: str) -> Optional[ProcessedQuery]:
+        """
+        Extract query information using LLM.
+
+        Args:
+            query: The user query.
+
+        Returns:
+            ProcessedQuery if successful, None otherwise.
+        """
+        # Build prompt with optional few-shot examples
+        examples = FEW_SHOT_EXAMPLES if self.use_few_shot else ""
+        prompt = QUERY_ANALYSIS_PROMPT.format(examples=examples, query=query)
+
+        messages = [{"role": "user", "content": prompt}]
+
+        try:
+            response = self.iliad_client.chat(messages=messages, model=self.model)
+            content = self.iliad_client.extract_content(response)
+
+            # Parse JSON response
+            parsed = self._parse_llm_response(content)
+            if parsed is None:
+                return None
+
+            # Build ProcessedQuery from parsed response
+            result = ProcessedQuery(
+                original_query=query,
+                cleaned_query=parsed.get("cleaned_query", query),
+                keywords=parsed.get("keywords", []),
+                lemmatized_keywords=parsed.get("keywords", []),  # LLM handles normalization
+                potential_project_names=parsed.get("project_names", []),
+                potential_person_names=parsed.get("person_names", []),
+                is_comparative=parsed.get("is_comparative", False),
+                comparative_entities=parsed.get("comparative_entities", []),
+                dates=parsed.get("dates", []),
+                technologies=parsed.get("technologies", []),
+                query_intent=parsed.get("query_intent", "informational"),
+                confidence=0.9,  # LLM extraction has high confidence
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"LLM extraction error: {e}")
+            return None
+
+    def _parse_llm_response(self, content: str) -> Optional[dict]:
+        """
+        Parse JSON response from LLM.
+
+        Args:
+            content: Raw LLM response string.
+
+        Returns:
+            Parsed dictionary or None if parsing fails.
+        """
+        # Try to extract JSON from response
+        content = content.strip()
+
+        # Handle markdown code blocks
+        if content.startswith("```"):
+            # Remove code block markers
+            lines = content.split("\n")
+            # Filter out ``` lines
+            json_lines = [l for l in lines if not l.strip().startswith("```")]
+            content = "\n".join(json_lines)
+
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON parse error: {e}")
+
+            # Try to find JSON object in response
+            json_match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+
+            logger.error(f"Could not parse LLM response: {content[:200]}")
+            return None
+
+    def _extract_with_regex(self, query: str) -> ProcessedQuery:
+        """
+        Fallback regex-based extraction.
+
+        Args:
+            query: The user query.
+
+        Returns:
+            ProcessedQuery with regex-extracted information.
+        """
+        # Clean query
         cleaned = self._remove_question_patterns(query)
-        logger.debug(f"After removing question patterns: '{cleaned}'")
 
-        # Extract keywords
-        keywords = self._extract_keywords(cleaned)
-        logger.info(f"Extracted keywords: {keywords}")
+        # Extract components using regex
+        keywords = self._extract_keywords_regex(cleaned)
+        project_names = self._extract_project_names_regex(query)
+        person_names = self._extract_person_names_regex(query)
+        dates = self._extract_dates_regex(query)
+        technologies = self._extract_technologies_regex(query)
+        is_comparative, comparative_entities = self._detect_comparative_regex(query)
 
-        # Lemmatize keywords if available
-        if self.use_lemmatization:
-            lemmatized = self._lemmatize_keywords(keywords)
-            logger.info(f"Lemmatized keywords: {lemmatized}")
-        else:
-            lemmatized = keywords.copy()
-
-        # Identify potential names
-        project_names = self._identify_potential_project_names(query, keywords)
-        person_names = self._identify_potential_person_names(query)
-
-        if project_names:
-            logger.info(f"Identified potential project names: {project_names}")
-        if person_names:
-            logger.info(f"Identified potential person names: {person_names}")
-
-        # Check for comparative queries
-        is_comparative, comparative_entities = self.is_comparative_query(query)
-
-        result = ProcessedQuery(
+        return ProcessedQuery(
             original_query=query,
             cleaned_query=cleaned,
             keywords=keywords,
-            lemmatized_keywords=lemmatized,
+            lemmatized_keywords=keywords,
             potential_project_names=project_names,
             potential_person_names=person_names,
             is_comparative=is_comparative,
             comparative_entities=comparative_entities,
+            dates=dates,
+            technologies=technologies,
+            query_intent=self._infer_intent_regex(query),
+            confidence=0.5,  # Regex has lower confidence
         )
-
-        logger.info(
-            f"Query processing complete - "
-            f"Keywords: {len(keywords)}, "
-            f"Projects: {len(project_names)}, "
-            f"People: {len(person_names)}"
-        )
-
-        return result
 
     def _remove_question_patterns(self, text: str) -> str:
-        """
-        Remove common question patterns from text.
+        """Remove common question patterns from text."""
+        patterns = [
+            r"^what\s+(is|are|was|were)\s+",
+            r"^who\s+(is|are|was|were)\s+",
+            r"^where\s+(is|are|was|were)\s+",
+            r"^when\s+(is|are|was|were)\s+",
+            r"^how\s+(do|does|did|is|are|can|could|would|should)\s+",
+            r"^can\s+you\s+(tell|show|help|explain|describe)\s+",
+            r"^could\s+you\s+(tell|show|help|explain|describe)\s+",
+            r"^please\s+(tell|show|help|explain|describe)\s+",
+            r"^tell\s+me\s+about\s+",
+            r"^explain\s+",
+            r"^describe\s+",
+        ]
 
-        Args:
-            text: Input text.
-
-        Returns:
-            Text with question patterns removed.
-        """
         result = text.strip()
+        for pattern in patterns:
+            result = re.sub(pattern, "", result, flags=re.IGNORECASE)
 
-        # Remove question patterns from beginning
-        for pattern in self.question_patterns:
-            result = pattern.sub("", result)
+        return result.rstrip("?").strip()
 
-        # Remove trailing question mark
-        result = result.rstrip("?").strip()
+    def _extract_keywords_regex(self, text: str) -> List[str]:
+        """Extract keywords using regex."""
+        stop_words = {
+            "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
+            "be", "have", "has", "had", "do", "does", "did", "will", "would",
+            "could", "should", "may", "might", "must", "shall", "can", "need",
+            "what", "which", "who", "whom", "this", "that", "these", "those",
+            "tell", "please", "help", "find", "give", "get", "know", "let", "make",
+        }
 
-        return result
-
-    def _tokenize(self, text: str) -> List[str]:
-        """
-        Tokenize text into words.
-
-        Args:
-            text: Input text.
-
-        Returns:
-            List of tokens.
-        """
-        if NLTK_AVAILABLE:
-            try:
-                return word_tokenize(text.lower())
-            except Exception as e:
-                logger.warning(f"NLTK tokenization failed: {e}, using fallback")
-
-        # Fallback tokenization
-        return re.findall(r"[\w'-]+", text.lower())
-
-    def _extract_keywords(self, text: str) -> List[str]:
-        """
-        Extract meaningful keywords from text.
-
-        Args:
-            text: Input text.
-
-        Returns:
-            List of extracted keywords.
-        """
         # Tokenize
-        tokens = self._tokenize(text)
+        tokens = re.findall(r"[\w'-]+", text.lower())
 
-        # Filter tokens
+        # Filter
         keywords = []
         for token in tokens:
-            # Remove leading/trailing hyphens and apostrophes
-            clean_token = token.strip("-'")
+            clean = token.strip("-'")
+            if len(clean) >= 2 and clean not in stop_words and not clean.isdigit():
+                keywords.append(clean)
 
-            # Skip if too short or is a stop word
-            if len(clean_token) < self.min_keyword_length:
-                continue
-            if clean_token in self.stop_words:
-                continue
+        # Add acronyms (preserve case)
+        acronyms = re.findall(r"\b([A-Z]{2,6})\b", text)
+        keywords.extend([a.lower() for a in acronyms])
 
-            # Skip pure numbers unless they look like versions
-            if clean_token.isdigit():
-                continue
+        return list(dict.fromkeys(keywords))
 
-            keywords.append(clean_token)
-
-        # Also extract multi-word phrases from original text
-        phrases = self._extract_phrases(text)
-        keywords.extend(phrases)
-
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_keywords = []
-        for kw in keywords:
-            if kw not in seen:
-                seen.add(kw)
-                unique_keywords.append(kw)
-
-        return unique_keywords
-
-    def _lemmatize_keywords(self, keywords: List[str]) -> List[str]:
-        """
-        Lemmatize keywords to their base form.
-
-        Args:
-            keywords: List of keywords to lemmatize.
-
-        Returns:
-            List of lemmatized keywords.
-        """
-        if not self.lemmatizer:
-            return keywords.copy()
-
-        lemmatized = []
-        for keyword in keywords:
-            # Try noun first, then verb
-            lemma = self.lemmatizer.lemmatize(keyword, pos="n")
-            if lemma == keyword:
-                lemma = self.lemmatizer.lemmatize(keyword, pos="v")
-            lemmatized.append(lemma)
-
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_lemmas = []
-        for lemma in lemmatized:
-            if lemma not in seen:
-                seen.add(lemma)
-                unique_lemmas.append(lemma)
-
-        return unique_lemmas
-
-    def _extract_phrases(self, text: str) -> List[str]:
-        """
-        Extract potential multi-word phrases (project names, acronyms).
-
-        Args:
-            text: Input text.
-
-        Returns:
-            List of extracted phrases.
-        """
-        phrases = []
-
-        # Find capitalized word sequences (potential proper nouns/names)
-        cap_pattern = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
-        for match in cap_pattern.findall(text):
-            phrases.append(match.lower())
-
-        # Find acronyms (2-6 capital letters)
-        acronym_pattern = re.compile(r"\b([A-Z]{2,6})\b")
-        for match in acronym_pattern.findall(text):
-            phrases.append(match.lower())
-
-        # Find quoted phrases
-        quote_pattern = re.compile(r'"([^"]+)"|\'([^\']+)\'')
-        for match in quote_pattern.findall(text):
-            phrase = match[0] or match[1]
-            if phrase:
-                phrases.append(phrase.lower())
-
-        return phrases
-
-    def _identify_potential_project_names(
-        self, query: str, keywords: List[str]
-    ) -> List[str]:
-        """
-        Identify potential project names from query.
-
-        Args:
-            query: Original query text.
-            keywords: Extracted keywords.
-
-        Returns:
-            List of potential project names.
-        """
+    def _extract_project_names_regex(self, query: str) -> List[str]:
+        """Extract project names using regex."""
         project_names = []
 
-        # Look for patterns like "the X project" or "X project"
-        project_pattern = re.compile(
+        # Acronyms (2-6 capital letters)
+        acronyms = re.findall(r"\b([A-Z]{2,6})\b", query)
+        project_names.extend([a.lower() for a in acronyms])
+
+        # "X project" pattern
+        project_pattern = re.findall(
             r"(?:the\s+)?(\w+(?:\s+\w+)?)\s+project",
+            query,
             re.IGNORECASE
         )
-        for match in project_pattern.findall(query):
+        for match in project_pattern:
             name = match.strip().lower()
-            if name not in self.stop_words:
+            if len(name) >= 2:
                 project_names.append(name)
 
-        # Look for acronyms which are often project names
-        acronym_pattern = re.compile(r"\b([A-Z]{2,6})\b")
-        for match in acronym_pattern.findall(query):
-            project_names.append(match.lower())
-
-        # Capitalized words that aren't at sentence start might be names
+        # Capitalized words mid-sentence
         words = query.split()
         for i, word in enumerate(words):
-            if i == 0:
-                continue
-            if word and word[0].isupper() and word.lower() not in self.stop_words:
+            if i > 0 and word and word[0].isupper():
                 clean = re.sub(r"[^\w]", "", word).lower()
                 if len(clean) >= 2:
                     project_names.append(clean)
 
         return list(dict.fromkeys(project_names))
 
-    def _identify_potential_person_names(self, query: str) -> List[str]:
-        """
-        Identify potential person names from query.
+    def _extract_person_names_regex(self, query: str) -> List[str]:
+        """Extract person names using regex."""
+        # "First Last" pattern
+        matches = re.findall(r"\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b", query)
 
-        Args:
-            query: Original query text.
-
-        Returns:
-            List of potential person names.
-        """
         person_names = []
+        false_positives = {"data science", "real world", "project name", "machine learning"}
 
-        # Pattern for "FirstName LastName"
-        name_pattern = re.compile(r"\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b")
-        for match in name_pattern.findall(query):
-            full_name = f"{match[0]} {match[1]}".lower()
-            # Filter out common false positives
-            if not any(
-                word in full_name
-                for word in ["data science", "real world", "project name"]
-            ):
+        for first, last in matches:
+            full_name = f"{first} {last}".lower()
+            if full_name not in false_positives:
                 person_names.append(full_name)
 
         return list(dict.fromkeys(person_names))
 
+    def _extract_dates_regex(self, query: str) -> List[str]:
+        """Extract date references using regex."""
+        dates = []
+
+        # Years (2020-2030)
+        years = re.findall(r"\b(20[2-3]\d)\b", query)
+        dates.extend(years)
+
+        # Quarters (Q1 2024, Q2-2025)
+        quarters = re.findall(r"\b(Q[1-4][\s-]?20[2-3]\d)\b", query, re.IGNORECASE)
+        dates.extend(quarters)
+
+        # Months with year
+        months = re.findall(
+            r"\b((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20[2-3]\d)\b",
+            query,
+            re.IGNORECASE
+        )
+        dates.extend(months)
+
+        # Date ranges
+        ranges = re.findall(r"\b(20[2-3]\d\s*[-–to]+\s*20[2-3]\d)\b", query)
+        dates.extend(ranges)
+
+        return list(dict.fromkeys(dates))
+
+    def _extract_technologies_regex(self, query: str) -> List[str]:
+        """Extract technology names using regex."""
+        # Common technologies to look for
+        tech_patterns = [
+            r"\b(Python|Java|JavaScript|TypeScript|R|SQL|Scala|Go|Rust)\b",
+            r"\b(Airflow|Spark|Kafka|Docker|Kubernetes|AWS|Azure|GCP)\b",
+            r"\b(TensorFlow|PyTorch|scikit-learn|Pandas|NumPy)\b",
+            r"\b(RAG|GraphRAG|LLM|NLP|ML|AI|GPT|BERT|Transformer)\b",
+            r"\b(PostgreSQL|MySQL|MongoDB|Redis|Snowflake|Databricks)\b",
+            r"\b(React|Vue|Angular|FastAPI|Flask|Django)\b",
+            r"\b(Git|GitHub|GitLab|Jenkins|CircleCI)\b",
+            r"\b(machine learning|deep learning|natural language processing)\b",
+        ]
+
+        technologies = []
+        for pattern in tech_patterns:
+            matches = re.findall(pattern, query, re.IGNORECASE)
+            technologies.extend([m.lower() if isinstance(m, str) else m[0].lower() for m in matches])
+
+        return list(dict.fromkeys(technologies))
+
+    def _detect_comparative_regex(self, query: str) -> Tuple[bool, List[str]]:
+        """Detect comparative queries using regex."""
+        query_lower = query.lower()
+
+        patterns = [
+            r"compare\s+(\w+)\s+(?:to|with|and|vs\.?|versus)\s+(\w+)",
+            r"(\w+)\s+vs\.?\s+(\w+)",
+            r"difference(?:s)?\s+between\s+(\w+)\s+and\s+(\w+)",
+            r"(\w+)\s+versus\s+(\w+)",
+            r"similarities?\s+between\s+(\w+)\s+and\s+(\w+)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, query_lower)
+            if match:
+                entities = [g for g in match.groups() if g and len(g) > 2]
+                if len(entities) >= 2:
+                    return (True, entities)
+
+        # Check for multiple acronyms with comparison words
+        acronyms = re.findall(r"\b([A-Z]{2,6})\b", query)
+        if len(acronyms) >= 2:
+            comparison_words = ["compare", "vs", "versus", "difference", "differ"]
+            if any(word in query_lower for word in comparison_words):
+                return (True, [a.lower() for a in acronyms])
+
+        return (False, [])
+
+    def _infer_intent_regex(self, query: str) -> str:
+        """Infer query intent using regex patterns."""
+        query_lower = query.lower()
+
+        if any(w in query_lower for w in ["compare", "vs", "versus", "difference"]):
+            return "comparison"
+        if any(w in query_lower for w in ["how many", "count", "total", "number of"]):
+            return "aggregation"
+        if any(w in query_lower for w in ["list", "show all", "get all", "what are"]):
+            return "listing"
+        if any(w in query_lower for w in ["how to", "how do", "how can"]):
+            return "how-to"
+
+        return "informational"
+
     def is_comparative_query(self, query: str) -> Tuple[bool, List[str]]:
         """
-        Detect if a query is comparative (comparing multiple projects/entities).
+        Detect if a query is comparative.
 
         Args:
             query: The user's query string.
@@ -429,40 +587,12 @@ class QueryProcessor:
         Returns:
             Tuple of (is_comparative, list of entities to compare).
         """
-        query_lower = query.lower()
+        # Use the processed result if available, otherwise use regex
+        if self.use_llm and self.iliad_client:
+            result = self.process_query(query)
+            return (result.is_comparative, result.comparative_entities)
 
-        # Comparative patterns
-        comparative_patterns = [
-            r"compare\s+(\w+)\s+(?:to|with|and|vs\.?|versus)\s+(\w+)",
-            r"(\w+)\s+vs\.?\s+(\w+)",
-            r"difference(?:s)?\s+between\s+(\w+)\s+and\s+(\w+)",
-            r"how\s+does\s+(\w+)\s+differ\s+from\s+(\w+)",
-            r"(\w+)\s+versus\s+(\w+)",
-            r"similarities?\s+between\s+(\w+)\s+and\s+(\w+)",
-            r"(\w+)\s+or\s+(\w+)\s+(?:which|what)",
-        ]
-
-        for pattern in comparative_patterns:
-            match = re.search(pattern, query_lower, re.IGNORECASE)
-            if match:
-                entities = [g for g in match.groups() if g]
-                # Filter out common words that aren't entities
-                entities = [e for e in entities if e not in self.stop_words and len(e) > 2]
-                if len(entities) >= 2:
-                    logger.info(f"Detected comparative query with entities: {entities}")
-                    return (True, entities)
-
-        # Also check for acronyms being compared
-        acronym_pattern = re.compile(r"\b([A-Z]{2,6})\b")
-        acronyms = acronym_pattern.findall(query)
-        if len(acronyms) >= 2:
-            # Check if there's comparison language
-            comparison_words = ["compare", "vs", "versus", "difference", "differ", "or"]
-            if any(word in query_lower for word in comparison_words):
-                logger.info(f"Detected comparative query with acronyms: {acronyms}")
-                return (True, [a.lower() for a in acronyms])
-
-        return (False, [])
+        return self._detect_comparative_regex(query)
 
     def get_search_terms(self, processed_query: ProcessedQuery) -> List[str]:
         """
@@ -472,19 +602,21 @@ class QueryProcessor:
             processed_query: Processed query object.
 
         Returns:
-            List of all search terms (keywords + names).
+            List of all search terms (keywords + names + technologies).
         """
         terms = []
-        terms.extend(processed_query.lemmatized_keywords)
+        terms.extend(processed_query.keywords)
         terms.extend(processed_query.potential_project_names)
         terms.extend(processed_query.potential_person_names)
+        terms.extend(processed_query.technologies)
 
         # Remove duplicates while preserving order
         seen = set()
         unique_terms = []
         for term in terms:
-            if term not in seen:
-                seen.add(term)
+            term_lower = term.lower()
+            if term_lower not in seen:
+                seen.add(term_lower)
                 unique_terms.append(term)
 
         return unique_terms
@@ -500,6 +632,6 @@ def extract_keywords(query: str) -> Tuple[str, List[str], List[str]]:
     Returns:
         Tuple of (cleaned_query, keywords_list, lemmatized_keywords).
     """
-    processor = QueryProcessor()
+    processor = QueryProcessor(use_llm=False)  # Use regex for quick extraction
     result = processor.process_query(query)
     return result.cleaned_query, result.keywords, result.lemmatized_keywords
