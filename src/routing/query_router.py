@@ -2,9 +2,15 @@
 Query router for hybrid RAG + Database pipeline.
 
 This module routes queries to the appropriate pipeline(s) based on
-intent classification and combines results.
+intent classification, entity extraction, and combines results.
 
-Two modes are available:
+Routing logic:
+1. Extract entities (projects, people) from query via LLM
+2. If entities found → RAG with entity-based filtering
+3. If no entities AND aggregation/listing query → Database pipeline
+4. If no entities AND informational query → RAG with similarity fallback
+
+Two routing modes available:
 1. Rule-based (default): Fast keyword matching for simple queries
 2. Smart mode: LLM-based query decomposition for complex queries
 
@@ -29,8 +35,10 @@ from .response_combiner import ResponseCombiner
 try:
     from iliad.client import IliadClient
     from database.pipeline import DatabasePipeline
+    from rag.query_processor import QueryProcessor, ProcessedQuery
 except ImportError:
-    pass
+    QueryProcessor = None
+    ProcessedQuery = None
 
 
 class QueryRouter:
@@ -58,6 +66,7 @@ class QueryRouter:
         iliad_client: Optional["IliadClient"] = None,
         use_llm_fallback: bool = False,
         use_smart_routing: bool = False,
+        use_entity_routing: bool = True,
     ) -> None:
         """Initialize query router.
 
@@ -67,11 +76,13 @@ class QueryRouter:
             iliad_client: Optional Iliad client for LLM operations
             use_llm_fallback: Whether to use LLM for ambiguous classification
             use_smart_routing: Use LLM-based smart routing with query decomposition
+            use_entity_routing: Use entity extraction to inform routing decisions
         """
         self.rag_pipeline = rag_pipeline
         self.db_pipeline = db_pipeline
         self.iliad_client = iliad_client
         self.use_smart_routing = use_smart_routing
+        self.use_entity_routing = use_entity_routing
 
         self.classifier = IntentClassifier(
             iliad_client=iliad_client,
@@ -79,6 +90,15 @@ class QueryRouter:
         )
 
         self.combiner = ResponseCombiner(iliad_client=iliad_client)
+
+        # Initialize query processor for entity extraction
+        if use_entity_routing and QueryProcessor is not None:
+            self.query_processor = QueryProcessor(
+                iliad_client=iliad_client,
+                use_llm=iliad_client is not None,
+            )
+        else:
+            self.query_processor = None
 
         # Initialize smart router if enabled
         if use_smart_routing and iliad_client:
@@ -94,7 +114,8 @@ class QueryRouter:
 
         logger.info(
             f"Initialized QueryRouter "
-            f"(DB: {db_pipeline is not None}, Smart: {use_smart_routing})"
+            f"(DB: {db_pipeline is not None}, Smart: {use_smart_routing}, "
+            f"EntityRouting: {use_entity_routing and self.query_processor is not None})"
         )
 
     def route(
@@ -106,6 +127,12 @@ class QueryRouter:
     ) -> Dict[str, Any]:
         """
         Route a query to appropriate pipeline(s).
+
+        Routing logic with entity extraction:
+        1. Extract entities (projects, people) from query via LLM
+        2. Classify query intent (RAG, DATABASE, HYBRID, CHART)
+        3. If no entities extracted AND intent suggests database query → Database
+        4. If entities extracted OR informational intent → RAG (with entity filtering)
 
         Args:
             query: User query string
@@ -143,6 +170,21 @@ class QueryRouter:
             "metadata": {},
         }
 
+        # Extract entities from query (if entity routing enabled)
+        processed_query = None
+        has_entities = False
+        if self.use_entity_routing and self.query_processor:
+            processed_query = self.query_processor.process_query(query)
+            has_entities = (
+                len(processed_query.potential_project_names) > 0 or
+                len(processed_query.potential_person_names) > 0
+            )
+            logger.info(
+                f"Entity extraction - Projects: {processed_query.potential_project_names}, "
+                f"People: {processed_query.potential_person_names}, "
+                f"Has entities: {has_entities}"
+            )
+
         # Classify intent
         if force_intent:
             classification = ClassificationResult(
@@ -153,33 +195,63 @@ class QueryRouter:
         else:
             classification = self.classifier.classify(query)
 
-        result["intent"] = classification.intent.value
+        # Apply entity-based routing override
+        # If no entities and query is aggregation/listing → prefer Database
+        # If entities found → prefer RAG (entity filtering handles it)
+        final_intent = classification.intent
+        routing_override = None
+
+        if self.use_entity_routing and not force_intent:
+            if not has_entities and classification.intent == QueryIntent.RAG:
+                # Check if this looks like a database query based on processed_query intent
+                if processed_query and processed_query.query_intent in ["aggregation", "listing"]:
+                    final_intent = QueryIntent.DATABASE
+                    routing_override = "No entities + aggregation/listing → Database"
+                    logger.info(f"Routing override: {routing_override}")
+            elif has_entities and classification.intent == QueryIntent.DATABASE:
+                # If entities found but classified as database, consider hybrid
+                # since we have specific entities to search for
+                if processed_query and processed_query.query_intent not in ["aggregation"]:
+                    final_intent = QueryIntent.HYBRID
+                    routing_override = "Entities found + database intent → Hybrid"
+                    logger.info(f"Routing override: {routing_override}")
+
+        result["intent"] = final_intent.value
 
         if return_metadata:
             result["metadata"] = {
-                "intent": classification.intent.value,
+                "intent": final_intent.value,
+                "original_intent": classification.intent.value,
                 "confidence": classification.confidence,
                 "reasoning": classification.reasoning,
-                "routing_mode": "rule_based",
+                "routing_mode": "entity_aware" if self.use_entity_routing else "rule_based",
+                "routing_override": routing_override,
+                "has_entities": has_entities,
             }
+            if processed_query:
+                result["metadata"]["extracted_entities"] = {
+                    "projects": processed_query.potential_project_names,
+                    "people": processed_query.potential_person_names,
+                    "query_intent": processed_query.query_intent,
+                }
 
         logger.info(
-            f"Query classified as {classification.intent.value} "
-            f"(confidence: {classification.confidence:.2f})"
+            f"Query classified as {final_intent.value} "
+            f"(original: {classification.intent.value}, confidence: {classification.confidence:.2f})"
         )
 
-        # Route based on intent
+        # Route based on final intent
         try:
-            if classification.intent == QueryIntent.DATABASE:
+            if final_intent == QueryIntent.DATABASE:
                 result = self._route_database(query, result)
 
-            elif classification.intent == QueryIntent.RAG:
+            elif final_intent == QueryIntent.RAG:
                 result = self._route_rag(query, result)
 
-            elif classification.intent == QueryIntent.HYBRID:
+            elif final_intent == QueryIntent.HYBRID:
                 result = self._route_hybrid(query, result)
 
-            elif classification.intent == QueryIntent.CHART:
+            elif final_intent == QueryIntent.CHART:
                 result = self._route_chart(query, result)
 
         except Exception as e:

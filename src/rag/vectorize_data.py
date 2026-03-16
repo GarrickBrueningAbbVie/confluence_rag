@@ -58,6 +58,14 @@ def chunk_pages(pages_data: List[Dict[str, Any]],
             children = page.get('children', [])
             parents = page.get('parents', [])
 
+            # Extract IDs for easier filtering
+            children_ids = [c.get('id', '') for c in children if c.get('id')]
+            parent_ids = [p.get('id', '') for p in parents if p.get('id')]
+
+            # Get immediate parent (last in parents list is direct parent)
+            parent_id = parent_ids[-1] if parent_ids else ''
+            parent_title = parents[-1].get('title', '') if parents else ''
+
             chunks.append({
                 'text': chunk,
                 'metadata': {
@@ -68,17 +76,18 @@ def chunk_pages(pages_data: List[Dict[str, Any]],
                     'space': page.get('space', page.get('space_key', '')),
                     'author': page.get('author', ''),
                     'version': page.get('version', ''),
-                    'page_id': page.get('id', ''),
-                    # Hierarchy metadata for re-ranking
+                    'page_id': str(page.get('id', '')),
+                    # Hierarchy metadata for re-ranking and filtering
                     'depth': page.get('depth', len(parents) + 1),
-                    'parents': parents,
-                    'children': children,
+                    'parent_id': str(parent_id),
+                    'parent_title': parent_title,
+                    'children_ids': ','.join(str(cid) for cid in children_ids),  # Store as comma-separated string
                     'has_children': len(children) > 0,
                     'children_count': len(children),
                     # Project metadata
                     'parent_project': page.get('parent_project', ''),
                     'main_project': page.get('main_project', ''),
-                    'main_project_id': page.get('main_project_id', ''),
+                    'main_project_id': str(page.get('main_project_id', '')),
                 }
             })
 

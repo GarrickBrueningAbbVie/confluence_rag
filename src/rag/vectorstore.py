@@ -243,6 +243,123 @@ class VectorStore:
 
         return similarities
 
+    def query_with_multi_filter(
+        self,
+        query_text: str,
+        n_results: int = 5,
+        filters: Optional[List[Dict[str, Any]]] = None,
+        filter_logic: str = "OR",
+    ) -> Dict[str, Any]:
+        """
+        Query the vector store with multiple metadata filters.
+
+        Supports filtering on multiple fields (e.g., main_project AND/OR author)
+        with configurable logic.
+
+        Args:
+            query_text: Query text to search for.
+            n_results: Number of results to return. Defaults to 5.
+            filters: List of filter dictionaries, each with:
+                - field: Metadata field name (e.g., 'main_project', 'author')
+                - values: List of allowed values for that field
+            filter_logic: "OR" (match any filter) or "AND" (match all filters).
+
+        Returns:
+            Dictionary containing matched documents, distances, and metadatas.
+
+        Example:
+            >>> results = store.query_with_multi_filter(
+            ...     query_text="data pipeline",
+            ...     filters=[
+            ...         {"field": "main_project", "values": ["ATLAS", "DataOps"]},
+            ...         {"field": "author", "values": ["John Smith"]},
+            ...     ],
+            ...     filter_logic="OR"
+            ... )
+        """
+        if len(self.documents) == 0:
+            logger.warning("Vector store is empty")
+            return {
+                "documents": [],
+                "metadatas": [],
+                "distances": [],
+                "ids": [],
+            }
+
+        logger.info(f"Querying with multi-filter (logic={filter_logic}): {filters}")
+
+        try:
+            # Generate embedding for query
+            query_embedding = self.embedding_manager.generate_embedding(query_text)
+
+            # Calculate cosine similarities
+            similarities = self._cosine_similarity(query_embedding, self.embeddings)
+
+            # DEBUG: Check similarity distribution before filtering
+            logger.info(
+                f"Similarity stats (before filter) - min: {similarities.min():.4f}, "
+                f"max: {similarities.max():.4f}, mean: {similarities.mean():.4f}"
+            )
+
+            # Apply metadata filters if specified
+            if filters and len(filters) > 0:
+                # Build individual masks for each filter
+                filter_masks = []
+                for f in filters:
+                    field = f.get("field")
+                    values = f.get("values", [])
+                    if field and values:
+                        # Normalize values for case-insensitive matching
+                        values_lower = [v.lower() if isinstance(v, str) else v for v in values]
+                        mask = np.array([
+                            str(meta.get(field, "")).lower() in values_lower
+                            for meta in self.metadatas
+                        ])
+                        filter_masks.append(mask)
+                        matching_count = mask.sum()
+                        logger.info(f"Filter '{field}' in {values}: matched {matching_count} documents")
+
+                # Combine masks based on logic
+                if filter_masks:
+                    if filter_logic.upper() == "AND":
+                        combined_mask = np.all(filter_masks, axis=0)
+                    else:  # OR logic (default)
+                        combined_mask = np.any(filter_masks, axis=0)
+
+                    total_matching = combined_mask.sum()
+                    logger.info(f"Combined filter ({filter_logic}): {total_matching} documents match")
+
+                    # Set similarity to -inf for non-matching documents
+                    filtered_similarities = np.where(combined_mask, similarities, -np.inf)
+                else:
+                    filtered_similarities = similarities
+            else:
+                filtered_similarities = similarities
+
+            # Get top k indices from filtered results
+            top_k = min(n_results, len(self.documents))
+            top_indices = np.argsort(filtered_similarities)[::-1][:top_k]
+
+            # Filter out indices with -inf similarity (filtered out)
+            valid_indices = [i for i in top_indices if filtered_similarities[i] != -np.inf]
+
+            # Convert similarity to distance (1 - similarity)
+            distances = [float(1 - similarities[i]) for i in valid_indices]
+
+            result = {
+                "documents": [self.documents[i] for i in valid_indices],
+                "metadatas": [self.metadatas[i] for i in valid_indices],
+                "distances": distances,
+                "ids": [self.ids[i] for i in valid_indices],
+            }
+
+            logger.info(f"Found {len(result['documents'])} documents after multi-filtering")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error querying vector store with multi-filter: {str(e)}")
+            raise
+
     def query_with_filter(
         self,
         query_text: str,
@@ -471,3 +588,276 @@ class VectorStore:
             "metadatas": self.metadatas[:limit],
             "ids": self.ids[:limit],
         }
+
+    def find_main_projects_by_similarity(
+        self,
+        project_names: List[str],
+        similarity_threshold: float = 0.8,
+    ) -> List[str]:
+        """
+        Find main_project values that are similar to the given project names.
+
+        Uses embedding similarity to match project names that may not be exact matches.
+
+        Args:
+            project_names: List of project names extracted from query.
+            similarity_threshold: Minimum similarity score (0-1). Defaults to 0.8.
+
+        Returns:
+            List of matching main_project values from the store.
+        """
+        if not project_names or len(self.documents) == 0:
+            return []
+
+        # Get unique main_project values from the store
+        unique_projects = list(set(
+            meta.get('main_project', '') for meta in self.metadatas
+            if meta.get('main_project')
+        ))
+
+        if not unique_projects:
+            return []
+
+        logger.info(f"Finding main_projects similar to: {project_names}")
+
+        # Generate embeddings for project names and unique main_projects
+        query_embeddings = self.embedding_manager.generate_embeddings(project_names)
+        project_embeddings = self.embedding_manager.generate_embeddings(unique_projects)
+
+        # Calculate similarities
+        matched_projects = set()
+        for i, query_name in enumerate(project_names):
+            query_emb = query_embeddings[i]
+            query_norm = query_emb / (np.linalg.norm(query_emb) + 1e-10)
+
+            for j, proj_name in enumerate(unique_projects):
+                proj_emb = project_embeddings[j]
+                proj_norm = proj_emb / (np.linalg.norm(proj_emb) + 1e-10)
+                similarity = float(np.dot(query_norm, proj_norm))
+
+                if similarity >= similarity_threshold:
+                    matched_projects.add(proj_name)
+                    logger.debug(
+                        f"  '{query_name}' matched '{proj_name}' "
+                        f"(similarity: {similarity:.3f})"
+                    )
+
+        logger.info(f"Found {len(matched_projects)} matching main_projects: {list(matched_projects)}")
+        return list(matched_projects)
+
+    def find_pages_by_title_similarity(
+        self,
+        search_terms: List[str],
+        similarity_threshold: float = 0.6,
+        max_depth: int = 8,
+    ) -> List[Dict[str, Any]]:
+        """
+        Find pages with titles similar to the search terms, prioritizing by depth.
+
+        Searches shallower pages first (depth 1, then 2, etc.) to find the
+        "main" page for a topic, but continues through all depths up to max_depth.
+
+        Args:
+            search_terms: List of terms to search for in titles (e.g., project names).
+            similarity_threshold: Minimum similarity score (0-1). Defaults to 0.6.
+            max_depth: Maximum depth to search. Defaults to 8 (covers most content).
+
+        Returns:
+            List of matching page info dicts with: page_id, title, depth, similarity.
+            Results are sorted by depth (ascending) then similarity (descending).
+        """
+        if not search_terms or len(self.documents) == 0:
+            return []
+
+        logger.info(f"Searching titles similar to: {search_terms} (threshold={similarity_threshold}, max_depth={max_depth})")
+
+        # Get unique pages (by page_id) with their titles and depths
+        page_info = {}
+        for meta in self.metadatas:
+            page_id = meta.get('page_id', '')
+            if page_id and page_id not in page_info:
+                page_info[page_id] = {
+                    'page_id': page_id,
+                    'title': meta.get('title', ''),
+                    'depth': meta.get('depth', 99),
+                    'main_project': meta.get('main_project', ''),
+                    'children_ids': meta.get('children_ids', ''),
+                }
+
+        if not page_info:
+            return []
+
+        # Generate embeddings for search terms
+        term_embeddings = self.embedding_manager.generate_embeddings(search_terms)
+
+        # Get unique titles and their embeddings
+        titles = [p['title'] for p in page_info.values() if p['title']]
+        page_ids_by_title = {p['title']: p['page_id'] for p in page_info.values()}
+
+        if not titles:
+            return []
+
+        title_embeddings = self.embedding_manager.generate_embeddings(titles)
+
+        # Calculate all similarities at once for efficiency
+        all_matches = []
+        for i, term in enumerate(search_terms):
+            term_emb = term_embeddings[i]
+            term_norm = term_emb / (np.linalg.norm(term_emb) + 1e-10)
+
+            for j, title in enumerate(titles):
+                page_id = page_ids_by_title[title]
+                page = page_info[page_id]
+
+                # Skip pages beyond max_depth
+                if page['depth'] > max_depth:
+                    continue
+
+                title_emb = title_embeddings[j]
+                title_norm = title_emb / (np.linalg.norm(title_emb) + 1e-10)
+                similarity = float(np.dot(term_norm, title_norm))
+
+                if similarity >= similarity_threshold:
+                    all_matches.append({
+                        'page_id': page_id,
+                        'title': title,
+                        'depth': page['depth'],
+                        'similarity': similarity,
+                        'matched_term': term,
+                        'main_project': page['main_project'],
+                        'children_ids': page['children_ids'],
+                    })
+
+        # Sort by depth (ascending) then similarity (descending)
+        # This prioritizes shallower pages but includes all matches
+        all_matches.sort(key=lambda x: (x['depth'], -x['similarity']))
+
+        # Remove duplicates (keep first occurrence = shallowest + highest similarity)
+        seen_pages = set()
+        unique_matches = []
+        for match in all_matches:
+            if match['page_id'] not in seen_pages:
+                seen_pages.add(match['page_id'])
+                unique_matches.append(match)
+
+        if unique_matches:
+            # Log matches by depth
+            depth_counts = {}
+            for m in unique_matches:
+                d = m['depth']
+                depth_counts[d] = depth_counts.get(d, 0) + 1
+            logger.info(f"Title matches by depth: {depth_counts}")
+
+        logger.info(f"Total title matches found: {len(unique_matches)}")
+        return unique_matches
+
+    def get_descendant_page_ids(self, parent_page_id: str) -> List[str]:
+        """
+        Get all descendant page IDs for a given parent page.
+
+        Recursively finds all children, grandchildren, etc.
+
+        Args:
+            parent_page_id: The page ID to find descendants for.
+
+        Returns:
+            List of all descendant page IDs (including the parent).
+        """
+        if len(self.documents) == 0:
+            return [parent_page_id]
+
+        # Build a mapping of page_id -> children_ids
+        page_children = {}
+        for meta in self.metadatas:
+            page_id = meta.get('page_id', '')
+            if page_id and page_id not in page_children:
+                children_str = meta.get('children_ids', '')
+                children_ids = [c.strip() for c in children_str.split(',') if c.strip()]
+                page_children[page_id] = children_ids
+
+        # BFS to find all descendants
+        descendants = set([parent_page_id])
+        queue = [parent_page_id]
+
+        while queue:
+            current = queue.pop(0)
+            children = page_children.get(current, [])
+            for child_id in children:
+                if child_id not in descendants:
+                    descendants.add(child_id)
+                    queue.append(child_id)
+
+        logger.info(f"Found {len(descendants)} descendants for page {parent_page_id}")
+        return list(descendants)
+
+    def query_with_page_ids(
+        self,
+        query_text: str,
+        page_ids: List[str],
+        n_results: int = 5,
+    ) -> Dict[str, Any]:
+        """
+        Query the vector store filtered to specific page IDs.
+
+        Args:
+            query_text: Query text to search for.
+            page_ids: List of page IDs to include.
+            n_results: Number of results to return.
+
+        Returns:
+            Dictionary containing matched documents, distances, and metadatas.
+        """
+        if len(self.documents) == 0:
+            logger.warning("Vector store is empty")
+            return {
+                "documents": [],
+                "metadatas": [],
+                "distances": [],
+                "ids": [],
+            }
+
+        logger.info(f"Querying with {len(page_ids)} page IDs filter")
+
+        try:
+            # Generate embedding for query
+            query_embedding = self.embedding_manager.generate_embedding(query_text)
+
+            # Calculate cosine similarities
+            similarities = self._cosine_similarity(query_embedding, self.embeddings)
+
+            # Create mask for matching page IDs
+            page_ids_set = set(str(pid) for pid in page_ids)
+            mask = np.array([
+                str(meta.get('page_id', '')) in page_ids_set
+                for meta in self.metadatas
+            ])
+
+            matching_count = mask.sum()
+            logger.info(f"Page ID filter matched {matching_count} documents")
+
+            # Set similarity to -inf for non-matching documents
+            filtered_similarities = np.where(mask, similarities, -np.inf)
+
+            # Get top k indices
+            top_k = min(n_results, len(self.documents))
+            top_indices = np.argsort(filtered_similarities)[::-1][:top_k]
+
+            # Filter out indices with -inf similarity
+            valid_indices = [i for i in top_indices if filtered_similarities[i] != -np.inf]
+
+            # Convert similarity to distance
+            distances = [float(1 - similarities[i]) for i in valid_indices]
+
+            result = {
+                "documents": [self.documents[i] for i in valid_indices],
+                "metadatas": [self.metadatas[i] for i in valid_indices],
+                "distances": distances,
+                "ids": [self.ids[i] for i in valid_indices],
+            }
+
+            logger.info(f"Found {len(result['documents'])} documents after page ID filtering")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error querying with page IDs: {str(e)}")
+            raise
