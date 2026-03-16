@@ -158,7 +158,7 @@ Your task is to extract structured information from user queries to improve sear
 Analyze the query and extract the following information:
 - cleaned_query: The query with question words removed (what, how, etc.) but keeping important terms
 - keywords: Important search terms (nouns, verbs, technical terms) - lowercase unless acronym
-- project_names: Names of projects mentioned (often acronyms like ALFA, DSA, ATLAS or capitalized names)
+- project_names: Names of projects mentioned (often acronyms like ALFA, DSA, ATLAS)
 - person_names: Full names of people mentioned (First Last format)
 - dates: Any date references (years, quarters, months, date ranges)
 - technologies: Programming languages, tools, frameworks, methodologies mentioned
@@ -167,7 +167,7 @@ Analyze the query and extract the following information:
 - query_intent: One of "informational", "comparison", "aggregation", "listing", "how-to"
 
 Important guidelines:
-- Project names can be acronyms (2-6 capital letters) or capitalized proper nouns
+- Project names can be acronyms, capatlized words, or lower case words
 - Distinguish between project names and technology names (Python is technology, ALFA is project)
 - Person names generally follow a First Last convenction, but can take other formats. (Smith, John == John Smith)
 - Dates can be years (2024), quarters (Q1 2025), months (January 2024), or ranges
