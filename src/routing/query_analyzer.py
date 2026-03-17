@@ -44,12 +44,22 @@ class SubQuery:
         intent: Classified intent (RAG/DATABASE/HYBRID)
         depends_on: Index of sub-query this depends on (for sequential execution)
         priority: Execution priority (lower = higher priority)
+        context_from: List of sub-query indices to inject results from
+        query_template: Template with {placeholders} for result injection
+        validation_criteria: Criteria for result validation
+        max_refinements: Maximum refinement attempts for this sub-query
+        store_as: Key to store result in context for later use
     """
 
     text: str
     intent: SubQueryIntent
     depends_on: Optional[int] = None
     priority: int = 0
+    context_from: List[int] = field(default_factory=list)
+    query_template: Optional[str] = None
+    validation_criteria: Optional[str] = None
+    max_refinements: int = 2
+    store_as: Optional[str] = None
 
 
 @dataclass

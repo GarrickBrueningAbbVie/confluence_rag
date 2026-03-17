@@ -6,11 +6,15 @@ This module provides an intelligent query routing system that:
 2. Decomposes complex queries into atomic sub-queries
 3. Executes sub-queries in parallel across appropriate pipelines
 4. Aggregates results into a coherent response
+5. Supports multi-step queries with feedback loops via AgentOrchestrator
 
 Example:
     >>> from routing.smart_router import SmartQueryRouter
     >>> router = SmartQueryRouter(rag_pipeline, db_pipeline, iliad_client)
     >>> result = router.route("Describe ALFA and how many projects reference it")
+    >>>
+    >>> # Multi-step query with agent orchestration
+    >>> result = router.route_multistep("What projects are similar to ALFA?")
 """
 
 import time
@@ -126,10 +130,71 @@ class SmartQueryRouter:
             timeout=query_timeout,
         )
 
+        # Initialize agent orchestrator for multi-step queries
+        self.orchestrator = None
+        self._init_orchestrator(
+            rag_pipeline=rag_pipeline,
+            db_pipeline=db_pipeline,
+            iliad_client=iliad_client,
+            max_workers=max_workers,
+        )
+
         logger.info(
             f"Initialized SmartQueryRouter "
-            f"(LLM: {iliad_client is not None}, DB: {db_pipeline is not None})"
+            f"(LLM: {iliad_client is not None}, DB: {db_pipeline is not None}, "
+            f"Orchestrator: {self.orchestrator is not None})"
         )
+
+    def _init_orchestrator(
+        self,
+        rag_pipeline: "RAGPipeline",
+        db_pipeline: Optional["DatabasePipeline"],
+        iliad_client: Optional["IliadClient"],
+        max_workers: int,
+    ) -> None:
+        """Initialize agent orchestrator with available agents.
+
+        Args:
+            rag_pipeline: RAG pipeline instance
+            db_pipeline: Optional database pipeline
+            iliad_client: Iliad client for LLM operations
+            max_workers: Max parallel workers
+        """
+        try:
+            from agents.orchestrator import AgentOrchestrator
+            from agents.rag_agent import RAGAgent
+            from agents.database_agent import DatabaseAgent
+
+            agents = []
+
+            # Initialize RAG agent
+            rag_agent = RAGAgent(
+                rag_pipeline=rag_pipeline,
+                iliad_client=iliad_client,
+            )
+            agents.append(rag_agent)
+
+            # Initialize Database agent if pipeline available
+            if db_pipeline:
+                db_agent = DatabaseAgent(
+                    db_pipeline=db_pipeline,
+                    iliad_client=iliad_client,
+                )
+                agents.append(db_agent)
+
+            # Create orchestrator
+            self.orchestrator = AgentOrchestrator(
+                agents=agents,
+                iliad_client=iliad_client,
+                max_workers=max_workers,
+                max_iterations=3,
+            )
+
+            logger.info(f"Initialized orchestrator with {len(agents)} agents")
+
+        except ImportError as e:
+            logger.warning(f"Could not initialize orchestrator: {e}")
+            self.orchestrator = None
 
     def route(
         self,
@@ -327,3 +392,94 @@ class SmartQueryRouter:
                     output += f"  `{q[:80]}...`\n"
 
         return output
+
+    def route_multistep(
+        self,
+        query: str,
+        force_agents: Optional[List[str]] = None,
+    ) -> SmartRouteResult:
+        """
+        Route query using agent orchestrator for multi-step execution.
+
+        Uses the AgentOrchestrator to handle complex queries that require
+        multiple steps with context passing between steps. This is ideal
+        for queries like "What projects are similar to ALFA?" which require:
+        1. First getting information about ALFA
+        2. Using that information to find similar projects
+
+        Args:
+            query: User's natural language query
+            force_agents: Optional list of agent names to use
+
+        Returns:
+            SmartRouteResult with answer and metadata
+
+        Example:
+            >>> result = router.route_multistep("What projects are similar to ALFA?")
+            >>> print(result.answer)
+            >>> print(f"Executed in {len(result.metadata.get('agents_used', []))} steps")
+        """
+        if not self.orchestrator:
+            logger.warning("Orchestrator not available, falling back to standard routing")
+            return self.route(query)
+
+        logger.info(f"Multi-step routing query: {query[:100]}...")
+
+        try:
+            # Execute via orchestrator
+            orch_result = self.orchestrator.execute(query, force_agents=force_agents)
+
+            # Convert OrchestrationResult to SmartRouteResult
+            sources = []
+            sub_results = []
+
+            # Extract sources and sub_results from orchestration steps
+            for step in orch_result.steps_executed:
+                step_result = step.get("result")
+                if step_result and step_result.data:
+                    # Extract sources if present
+                    if isinstance(step_result.data, dict):
+                        step_sources = step_result.data.get("sources", [])
+                        sources.extend(step_sources)
+
+            return SmartRouteResult(
+                success=orch_result.success,
+                answer=orch_result.final_answer,
+                original_query=query,
+                analysis=None,  # Orchestrator doesn't use QueryAnalysisResult
+                sub_results=sub_results,
+                sources=sources,
+                queries=[],  # Could extract from steps if needed
+                execution_time=orch_result.execution_time,
+                metadata={
+                    "routing_mode": "multi_step",
+                    "agents_used": orch_result.metadata.get("agents_used", []),
+                    "num_steps": orch_result.metadata.get("num_steps", 0),
+                    "iterations": orch_result.metadata.get("iterations", 0),
+                    "steps": [
+                        {
+                            "agent": s.get("agent"),
+                            "query": s.get("query", "")[:100],
+                            "success": s.get("result").success if s.get("result") else False,
+                        }
+                        for s in orch_result.steps_executed
+                    ],
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Multi-step routing failed: {e}")
+            return SmartRouteResult(
+                success=False,
+                answer=f"Error in multi-step processing: {str(e)}",
+                original_query=query,
+                metadata={"error": str(e), "routing_mode": "multi_step"},
+            )
+
+    def supports_multistep(self) -> bool:
+        """Check if multi-step routing is available.
+
+        Returns:
+            True if orchestrator is initialized
+        """
+        return self.orchestrator is not None

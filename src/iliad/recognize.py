@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Union
 
 from loguru import logger
 
-from iliad.client import IliadClient
+from .client import IliadClient
 
 
 # File type mappings
@@ -50,13 +50,17 @@ AUDIO_EXTENSIONS = {
 
 class TextRecognizer:
     """
-    High-level text extraction from various file formats.
+    High-level text extraction and image analysis from various file formats.
 
     Automatically selects the appropriate Iliad API endpoint based on
     file type:
-    - Documents/text: /recognize
-    - Images: /recognize/ocr
+    - Documents/text: /recognize endpoint
+    - Images: Multimodal chat for detailed analysis (vision LLM)
     - Audio: /transcribe/aws (async)
+
+    For images, this class uses multimodal LLM capabilities to provide
+    detailed analysis including descriptions of diagrams, charts, and
+    visual elements - not just OCR text extraction.
 
     Attributes:
         client: IliadClient instance for API calls
@@ -65,7 +69,7 @@ class TextRecognizer:
     Example:
         >>> recognizer = TextRecognizer(iliad_client)
         >>> text = recognizer.recognize_file("document.pdf")
-        >>> images_text = recognizer.recognize_batch(["img1.png", "img2.jpg"])
+        >>> analysis = recognizer.analyze_image("diagram.png")
     """
 
     def __init__(
@@ -144,7 +148,8 @@ class TextRecognizer:
             return self.client.recognize(str(path), source_language=language)
 
         elif file_type == "image":
-            return self.client.recognize_ocr(str(path))
+            # Use multimodal chat for detailed image analysis instead of basic OCR
+            return self.client.analyze_image(str(path))
 
         elif file_type == "audio":
             # Audio transcription is async, so we need to poll
@@ -166,6 +171,9 @@ class TextRecognizer:
     ) -> str:
         """Extract text from image using OCR.
 
+        Note: For detailed image analysis and descriptions (not just text extraction),
+        use analyze_image() instead.
+
         Args:
             image_path: Path to image file (JPEG, PNG, or TIFF)
 
@@ -186,6 +194,60 @@ class TextRecognizer:
 
         logger.info(f"Running OCR on image: {path.name}")
         return self.client.recognize_ocr(str(path))
+
+    def analyze_image(
+        self,
+        image_path: Union[str, Path],
+        prompt: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> str:
+        """Analyze an image using multimodal LLM capabilities.
+
+        Unlike recognize_image() which only extracts text via OCR, this method
+        uses a vision-capable LLM to understand and describe the full content
+        of the image including diagrams, charts, visual elements, and context.
+
+        Args:
+            image_path: Path to image file (JPEG, PNG, WebP, or GIF)
+            prompt: Custom prompt for analysis. If None, uses a default prompt
+                   that requests a detailed explanation and summary.
+            model: Model to use (defaults to gpt-4o for vision capabilities)
+
+        Returns:
+            Detailed analysis and description of the image
+
+        Example:
+            >>> analysis = recognizer.analyze_image("architecture_diagram.png")
+            >>> print(analysis)
+            "This diagram illustrates a microservices architecture..."
+
+            >>> analysis = recognizer.analyze_image(
+            ...     "chart.png",
+            ...     prompt="What trends are shown in this chart?"
+            ... )
+        """
+        path = Path(image_path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        ext = path.suffix.lower()
+        supported_extensions = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+        if ext not in supported_extensions:
+            raise ValueError(
+                f"Unsupported image format: {ext}. "
+                f"Use JPEG, PNG, WebP, or GIF."
+            )
+
+        logger.info(f"Analyzing image with LLM: {path.name}")
+
+        kwargs = {}
+        if prompt:
+            kwargs["prompt"] = prompt
+        if model:
+            kwargs["model"] = model
+
+        return self.client.analyze_image(str(path), **kwargs)
 
     def recognize_batch(
         self,

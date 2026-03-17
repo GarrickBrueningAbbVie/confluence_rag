@@ -6,7 +6,7 @@ using Iliad API for text extraction and analysis.
 
 Supported attachment types:
 - Documents: PDF, DOCX, PPTX, XLSX, DOC, PPT, XLS
-- Images: PNG, JPG, JPEG, GIF, TIFF (processed via OCR)
+- Images: PNG, JPG, JPEG, GIF, TIFF (analyzed via multimodal LLM for detailed descriptions)
 - Text: TXT, CSV, JSON, XML, MD
 
 Example:
@@ -25,9 +25,11 @@ Example:
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from loguru import logger
+
+from .parallel import ParallelProcessor, ProcessingResult
 
 # Import types for type hints
 try:
@@ -54,8 +56,8 @@ class AttachmentFetcher:
     Fetch and process Confluence attachments.
 
     Downloads attachments from Confluence pages and processes them using
-    Iliad API for text extraction. Supports documents, images (via OCR),
-    and text files.
+    Iliad API for text extraction. Supports documents, images (via multimodal
+    LLM analysis for detailed descriptions), and text files.
 
     Attributes:
         confluence_client: Confluence REST client for fetching attachments
@@ -199,7 +201,7 @@ class AttachmentFetcher:
 
         Extracts text from the attachment based on file type:
         - Documents: Use /recognize endpoint
-        - Images: Use /recognize/ocr endpoint
+        - Images: Use multimodal chat for detailed analysis and descriptions
         - Text files: Read directly
 
         Args:
@@ -241,10 +243,10 @@ class AttachmentFetcher:
                 logger.debug(f"Extracted {len(result['extracted_text'])} chars from {filename}")
 
             elif category == "image":
-                # Use OCR for images
-                result["extracted_text"] = self.recognizer.recognize_image(str(path))
+                # Use multimodal LLM for detailed image analysis (not just OCR)
+                result["extracted_text"] = self.recognizer.analyze_image(str(path))
                 result["success"] = True
-                logger.debug(f"OCR extracted {len(result['extracted_text'])} chars from {filename}")
+                logger.debug(f"Image analysis extracted {len(result['extracted_text'])} chars from {filename}")
 
             elif category == "text":
                 # Read text files directly
@@ -271,6 +273,107 @@ class AttachmentFetcher:
             logger.error(f"Failed to process attachment {filename}: {e}")
 
         return result
+
+    def _format_attachment_content(
+        self,
+        result: Dict[str, Any],
+    ) -> str:
+        """Format attachment content with semantic labels for RAG/LLM consumption.
+
+        Creates clear, type-specific labels so an LLM can understand the source
+        and nature of the content when generating responses.
+
+        Args:
+            result: Processing result dictionary with filename, file_type,
+                   extracted_text, and optional description
+
+        Returns:
+            Formatted content string with semantic labels
+
+        Example output for images:
+            [BEGIN IMAGE ANALYSIS: architecture_diagram.png]
+            Source: Image file (PNG)
+            The following content is an AI-generated analysis of an image attachment.
+
+            This diagram shows a microservices architecture with...
+            [END IMAGE ANALYSIS: architecture_diagram.png]
+        """
+        filename = result.get("filename", "unknown")
+        file_type = result.get("file_type", "unknown")
+        content = result.get("extracted_text", "")
+        description = result.get("description", "")
+
+        # Get file extension for more specific labeling
+        ext = Path(filename).suffix.lower() if filename != "unknown" else ""
+        ext_label = ext.upper().lstrip(".") if ext else "UNKNOWN"
+
+        if file_type == "image":
+            # Clear semantic label for image analysis
+            header = f"[BEGIN IMAGE ANALYSIS: {filename}]\n"
+            header += f"Source: Image file ({ext_label})\n"
+            header += "The following content is an AI-generated analysis of an image attachment.\n"
+            if description:
+                header += f"Summary: {description}\n"
+            header += "\n"
+            footer = f"\n[END IMAGE ANALYSIS: {filename}]"
+            return header + content + footer
+
+        elif file_type == "document":
+            # Label for extracted document text with specific format
+            doc_type_map = {
+                ".pdf": "PDF document",
+                ".docx": "Microsoft Word document",
+                ".doc": "Microsoft Word document (legacy)",
+                ".pptx": "Microsoft PowerPoint presentation",
+                ".ppt": "Microsoft PowerPoint presentation (legacy)",
+                ".xlsx": "Microsoft Excel spreadsheet",
+                ".xls": "Microsoft Excel spreadsheet (legacy)",
+                ".rtf": "Rich Text Format document",
+                ".odt": "OpenDocument text",
+                ".ods": "OpenDocument spreadsheet",
+                ".odp": "OpenDocument presentation",
+            }
+            doc_type = doc_type_map.get(ext, f"{ext_label} document")
+
+            header = f"[BEGIN DOCUMENT CONTENT: {filename}]\n"
+            header += f"Source: {doc_type}\n"
+            header += "The following content was extracted from an attached document.\n"
+            if description:
+                header += f"Summary: {description}\n"
+            header += "\n"
+            footer = f"\n[END DOCUMENT CONTENT: {filename}]"
+            return header + content + footer
+
+        elif file_type == "text":
+            # Label for text file content with specific format
+            text_type_map = {
+                ".txt": "Plain text file",
+                ".csv": "CSV (comma-separated values) file",
+                ".json": "JSON data file",
+                ".xml": "XML data file",
+                ".md": "Markdown file",
+                ".html": "HTML file",
+            }
+            text_type = text_type_map.get(ext, f"{ext_label} text file")
+
+            header = f"[BEGIN TEXT FILE: {filename}]\n"
+            header += f"Source: {text_type}\n"
+            header += "The following content is from an attached text file.\n"
+            if description:
+                header += f"Summary: {description}\n"
+            header += "\n"
+            footer = f"\n[END TEXT FILE: {filename}]"
+            return header + content + footer
+
+        else:
+            # Fallback for unknown types
+            header = f"[BEGIN ATTACHMENT: {filename}]\n"
+            header += f"Source: {ext_label} file\n"
+            if description:
+                header += f"Summary: {description}\n"
+            header += "\n"
+            footer = f"\n[END ATTACHMENT: {filename}]"
+            return header + content + footer
 
     def _generate_description(
         self,
@@ -350,13 +453,9 @@ Description (keep under {max_length} characters):"""
                 result = self.process_attachment(file_path)
 
                 if result["success"] and result["extracted_text"]:
-                    # Add content with header
-                    header = f"\n\n--- Attachment: {result['filename']} ---\n"
-                    if result["description"]:
-                        header += f"Description: {result['description']}\n"
-                    header += "\n"
-
-                    all_content.append(header + result["extracted_text"])
+                    # Add content with type-specific semantic labels for RAG/LLM
+                    formatted = self._format_attachment_content(result)
+                    all_content.append(formatted)
 
         # Cleanup downloaded files if requested
         if cleanup:
@@ -420,3 +519,299 @@ Description (keep under {max_length} characters):"""
         logger.info(f"Batch complete: {successful}/{len(page_ids)} pages had extractable attachments")
 
         return results
+
+    # -------------------------------------------------------------------------
+    # Parallel Processing Methods
+    # -------------------------------------------------------------------------
+
+    def _download_and_process_attachment(
+        self,
+        args: Tuple[Dict[str, Any], str],
+    ) -> Dict[str, Any]:
+        """Download and process a single attachment (for parallel execution).
+
+        Args:
+            args: Tuple of (attachment_metadata, page_id)
+
+        Returns:
+            Processing result dictionary
+        """
+        attachment, page_id = args
+
+        # Download
+        file_path = self.download_attachment(attachment, page_id)
+        if not file_path:
+            return {
+                "filename": attachment.get("title", "unknown"),
+                "file_type": "unknown",
+                "extracted_text": "",
+                "description": "",
+                "success": False,
+                "file_path": None,
+            }
+
+        # Process
+        result = self.process_attachment(file_path)
+        result["file_path"] = file_path
+        return result
+
+    def process_attachments_parallel(
+        self,
+        attachments: List[Dict[str, Any]],
+        page_id: str,
+        max_workers: int = 4,
+        rate_limit_rps: Optional[float] = None,
+        cleanup: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Process multiple attachments in parallel within a single page.
+
+        Downloads and processes attachments concurrently using a thread pool.
+        This is useful when a page has multiple image attachments that each
+        require LLM analysis.
+
+        Args:
+            attachments: List of attachment metadata dictionaries
+            page_id: Confluence page ID for organizing storage
+            max_workers: Maximum concurrent processing threads
+            rate_limit_rps: Optional requests per second limit
+            cleanup: Whether to delete downloaded files after processing
+
+        Returns:
+            List of processing result dictionaries
+
+        Example:
+            >>> attachments = fetcher.fetch_page_attachments("123456")
+            >>> results = fetcher.process_attachments_parallel(attachments, "123456")
+            >>> successful = [r for r in results if r['success']]
+        """
+        if not attachments:
+            return []
+
+        logger.info(
+            f"Processing {len(attachments)} attachments in parallel "
+            f"(workers={max_workers}, rps={rate_limit_rps})"
+        )
+
+        # Prepare arguments for parallel processing
+        args_list = [(att, page_id) for att in attachments]
+
+        # Process in parallel
+        processor = ParallelProcessor(
+            max_workers=max_workers,
+            rate_limit_rps=rate_limit_rps,
+        )
+
+        try:
+            results = processor.map(
+                self._download_and_process_attachment,
+                args_list,
+                desc=f"Attachments for page {page_id}",
+            )
+
+            # Extract results and collect file paths for cleanup
+            output = []
+            downloaded_files = []
+
+            for proc_result in results:
+                if proc_result.success and proc_result.value:
+                    result = proc_result.value
+                    if result.get("file_path"):
+                        downloaded_files.append(result["file_path"])
+                    output.append(result)
+                else:
+                    # Failed processing - create error result
+                    output.append({
+                        "filename": "unknown",
+                        "file_type": "unknown",
+                        "extracted_text": "",
+                        "description": "",
+                        "success": False,
+                        "error": str(proc_result.error) if proc_result.error else "Unknown error",
+                    })
+
+            # Cleanup
+            if cleanup:
+                for file_path in downloaded_files:
+                    try:
+                        if file_path and Path(file_path).exists():
+                            Path(file_path).unlink()
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup {file_path}: {e}")
+
+                # Remove page directory if empty
+                try:
+                    page_dir = self.storage_path / page_id
+                    if page_dir.exists() and not any(page_dir.iterdir()):
+                        page_dir.rmdir()
+                except Exception:
+                    pass
+
+            return output
+
+        finally:
+            processor.shutdown()
+
+    def process_all_page_attachments_parallel(
+        self,
+        page_id: str,
+        max_workers: int = 4,
+        rate_limit_rps: Optional[float] = None,
+        cleanup: bool = True,
+    ) -> str:
+        """Process all attachments for a page in parallel.
+
+        Parallel version of process_all_page_attachments() that processes
+        multiple attachments concurrently.
+
+        Args:
+            page_id: Confluence page ID
+            max_workers: Maximum concurrent processing threads
+            rate_limit_rps: Optional requests per second limit
+            cleanup: Whether to delete downloaded files after processing
+
+        Returns:
+            Combined text content from all attachments
+
+        Example:
+            >>> content = fetcher.process_all_page_attachments_parallel("123456")
+            >>> print(f"Extracted {len(content)} characters")
+        """
+        # Fetch attachment metadata
+        attachments = self.fetch_page_attachments(page_id)
+
+        if not attachments:
+            logger.debug(f"No attachments found for page {page_id}")
+            return ""
+
+        # Process in parallel
+        results = self.process_attachments_parallel(
+            attachments,
+            page_id,
+            max_workers=max_workers,
+            rate_limit_rps=rate_limit_rps,
+            cleanup=cleanup,
+        )
+
+        # Combine results with semantic labels
+        all_content = []
+        for result in results:
+            if result.get("success") and result.get("extracted_text"):
+                formatted = self._format_attachment_content(result)
+                all_content.append(formatted)
+
+        combined = "\n".join(all_content)
+        logger.info(
+            f"Extracted {len(combined)} chars from {len(all_content)} attachments "
+            f"for page {page_id} (parallel)"
+        )
+
+        return combined
+
+    def _process_page_attachments_wrapper(self, page_id: str) -> Tuple[str, str]:
+        """Wrapper for parallel page processing.
+
+        Args:
+            page_id: Confluence page ID
+
+        Returns:
+            Tuple of (page_id, extracted_content)
+        """
+        try:
+            content = self.process_all_page_attachments_parallel(
+                page_id,
+                max_workers=4,  # Within-page parallelization
+                cleanup=True,
+            )
+            return (page_id, content)
+        except Exception as e:
+            logger.error(f"Failed to process page {page_id}: {e}")
+            return (page_id, "")
+
+    def process_pages_parallel(
+        self,
+        page_ids: List[str],
+        max_workers_pages: int = 8,
+        max_workers_attachments: int = 4,
+        rate_limit_rps: Optional[float] = 10.0,
+        batch_size: int = 50,
+        cleanup: bool = True,
+    ) -> Dict[str, str]:
+        """Process attachments for multiple pages in parallel.
+
+        Two-level parallelization:
+        1. Process multiple pages concurrently (max_workers_pages)
+        2. Within each page, process attachments concurrently (max_workers_attachments)
+
+        Includes batch processing to limit concurrent API load and optional
+        rate limiting for API calls.
+
+        Args:
+            page_ids: List of Confluence page IDs
+            max_workers_pages: Maximum concurrent page processing
+            max_workers_attachments: Maximum concurrent attachments per page
+            rate_limit_rps: Optional requests per second limit
+            batch_size: Number of pages to process per batch (default 50)
+            cleanup: Whether to delete downloaded files after processing
+
+        Returns:
+            Dictionary mapping page IDs to extracted content
+
+        Example:
+            >>> results = fetcher.process_pages_parallel(
+            ...     page_ids[:100],
+            ...     max_workers_pages=8,
+            ...     batch_size=50,
+            ...     rate_limit_rps=10.0,
+            ... )
+            >>> successful = sum(1 for c in results.values() if c)
+        """
+        if not page_ids:
+            return {}
+
+        logger.info(
+            f"Processing {len(page_ids)} pages in parallel "
+            f"(page_workers={max_workers_pages}, att_workers={max_workers_attachments}, "
+            f"batch_size={batch_size}, rps={rate_limit_rps})"
+        )
+
+        # Store attachment worker config for nested processing
+        self._parallel_attachment_workers = max_workers_attachments
+
+        # Create processor for page-level parallelization
+        processor = ParallelProcessor(
+            max_workers=max_workers_pages,
+            rate_limit_rps=rate_limit_rps,
+        )
+
+        try:
+            # Process in batches
+            results = processor.map_batched(
+                self._process_page_attachments_wrapper,
+                page_ids,
+                batch_size=batch_size,
+                desc="Pages",
+                pause_between_batches=2.0,  # Give API time to recover
+            )
+
+            # Convert to dictionary
+            output = {}
+            for proc_result in results:
+                if proc_result.success and proc_result.value:
+                    page_id, content = proc_result.value
+                    output[page_id] = content
+                else:
+                    # Use original item as page_id for failed results
+                    output[proc_result.item] = ""
+
+            successful = sum(1 for c in output.values() if c)
+            logger.info(
+                f"Parallel batch complete: {successful}/{len(page_ids)} pages "
+                f"had extractable attachments"
+            )
+
+            return output
+
+        finally:
+            processor.shutdown()
+            if hasattr(self, "_parallel_attachment_workers"):
+                delattr(self, "_parallel_attachment_workers")

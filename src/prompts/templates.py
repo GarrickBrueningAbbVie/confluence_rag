@@ -42,13 +42,14 @@ class PromptTemplates:
             Complete prompt for LLM
         """
         base = f"""You are a helpful assistant that answers questions based on the provided context.
-Use only the information from the context to answer. If the context doesn't contain
-relevant information, say so clearly.
+            Use only the information from the context to answer. If the context doesn't contain
+            relevant information, say so clearly.
 
-Context:
-{context}
+            Context:
+            {context}
 
-Question: {question}"""
+            Question: {question}
+        """
 
         if instructions:
             base += f"\n\nAdditional instructions: {instructions}"
@@ -74,19 +75,20 @@ Question: {question}"""
             Complete prompt for query generation
         """
         prompt = f"""You are a pandas query generator. Given a natural language question about
-Confluence page data, generate a pandas query to answer it.
+            Confluence page data, generate a pandas query to answer it.
 
-## DataFrame Schema
-The DataFrame is named `df` and has the following columns:
+            ## DataFrame Schema
+            The DataFrame is named `df` and has the following columns:
 
-{schema_info}
+            {schema_info}
 
-## Important Notes
-- The 'technologies' column contains lists of strings
-- Use .apply(lambda x: ...) to search within list columns
-- Always handle None/NaN values appropriately
-- Return results as dictionaries, lists, or scalar values
-- Use .to_dict('records') to convert DataFrames to list of dicts"""
+            ## Important Notes
+            - The 'technologies' column contains lists of strings
+            - Use .apply(lambda x: ...) to search within list columns
+            - Always handle None/NaN values appropriately
+            - Return results as dictionaries, lists, or scalar values
+            - Use .to_dict('records') to convert DataFrames to list of dicts
+        """
 
         if examples:
             prompt += f"\n\n## Examples\n{examples}"
@@ -172,39 +174,40 @@ Technologies:"""
         """
         return f"""Assess the completeness of this project documentation page against a standard project charter template.
 
-Project Charter Template Sections:
-1. Definition/Purpose (15%) - Project goals and objectives
-2. Benefits (10%) - Expected benefits and value
-3. Project Team (10%) - Team members and roles
-4. Milestones/Timeline (10%) - Key dates and deliverables
-5. Risks/Dependencies (10%) - Known risks and dependencies
-6. Technical Approach (15%) - Architecture, technologies, design
-7. Data Sources (10%) - Data inputs and outputs
-8. Integration Points (5%) - External system connections
-9. Security/Compliance (5%) - Security considerations
-10. Success Metrics (5%) - KPIs and success criteria
-11. Maintenance Plan (5%) - Ongoing support plan
+        Project Charter Template Sections:
+        1. Definition/Purpose (15%) - Project goals and objectives
+        2. Benefits (10%) - Expected benefits and value
+        3. Project Team (10%) - Team members and roles
+        4. Milestones/Timeline (10%) - Key dates and deliverables
+        5. Risks/Dependencies (10%) - Known risks and dependencies
+        6. Technical Approach (15%) - Architecture, technologies, design
+        7. Data Sources (10%) - Data inputs and outputs
+        8. Integration Points (5%) - External system connections
+        9. Security/Compliance (5%) - Security considerations
+        10. Success Metrics (5%) - KPIs and success criteria
+        11. Maintenance Plan (5%) - Ongoing support plan
 
-Page Title: {title}
+        Page Title: {title}
 
-Content:
-{content[:6000]}
+        Content:
+        {content[:6000]}
 
-For each section, indicate if it's:
-- PRESENT: Content clearly addresses this section
-- PARTIAL: Some relevant content but incomplete
-- MISSING: No content for this section
+        For each section, indicate if it's:
+        - PRESENT: Content clearly addresses this section
+        - PARTIAL: Some relevant content but incomplete
+        - MISSING: No content for this section
 
-Then calculate an overall score (0-100) and provide a brief summary.
+        Then calculate an overall score (0-100) and provide a brief summary.
 
-Format your response as:
-SECTION_SCORES:
-1. Definition/Purpose: [PRESENT/PARTIAL/MISSING]
-2. Benefits: [PRESENT/PARTIAL/MISSING]
-...
+        Format your response as:
+        SECTION_SCORES:
+        1. Definition/Purpose: [PRESENT/PARTIAL/MISSING]
+        2. Benefits: [PRESENT/PARTIAL/MISSING]
+        ...
 
-SCORE: [0-100]
-SUMMARY: [Brief description of gaps]"""
+        SCORE: [0-100]
+        SUMMARY: [Brief description of gaps
+    """
 
     @staticmethod
     def chart_generation(

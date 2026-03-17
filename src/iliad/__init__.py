@@ -14,9 +14,9 @@ Modules:
     analyze: Document analysis and content extraction
 """
 
-from iliad.client import IliadClient, IliadClientConfig, IliadModel
-from iliad.recognize import TextRecognizer
-from iliad.analyze import DocumentAnalyzer
+from .client import IliadClient, IliadClientConfig, IliadModel
+from .recognize import TextRecognizer
+from .analyze import DocumentAnalyzer
 
 __all__ = [
     "IliadClient",

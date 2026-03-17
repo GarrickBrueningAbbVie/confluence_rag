@@ -21,10 +21,40 @@ import json
 import math
 import os
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+
+
+@dataclass
+class ParallelConfig:
+    """Configuration for parallel processing in the pipeline.
+
+    Attributes:
+        enabled: Whether to use parallel processing
+        max_workers_pages: Maximum concurrent page processing
+        max_workers_attachments: Maximum concurrent attachments per page
+        max_workers_metadata: Maximum concurrent metadata extraction
+        rate_limit_rps: Requests per second limit for API calls
+        batch_size: Number of items to process per batch
+
+    Example:
+        >>> config = ParallelConfig(
+        ...     enabled=True,
+        ...     max_workers_pages=8,
+        ...     rate_limit_rps=10.0,
+        ... )
+        >>> pipeline.process("input.json", parallel_config=config)
+    """
+
+    enabled: bool = True
+    max_workers_pages: int = 8
+    max_workers_attachments: int = 4
+    max_workers_metadata: int = 8
+    rate_limit_rps: Optional[float] = 10.0
+    batch_size: int = 50
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -32,6 +62,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from confluence.rest_client import ConfluenceRestClient
 from iliad.client import IliadClient, IliadClientConfig
 from preprocessing.attachment_fetcher import AttachmentFetcher
+from preprocessing.attachment_deduplicator import AttachmentDeduplicator
 from preprocessing.metadata_extractor import MetadataExtractor
 from preprocessing.completeness_assessor import CompletenessAssessor
 
@@ -41,17 +72,19 @@ class PreprocessingPipeline:
     Complete preprocessing pipeline for Confluence pages.
 
     Orchestrates:
-    1. Attachment processing (optional)
-    2. Metadata extraction
+    1. Attachment processing (optional, with deduplication)
+    2. Metadata extraction (parent_project, main_project, technologies)
     3. Completeness assessment
 
     Attributes:
         confluence_client: Confluence REST client (for attachments)
         iliad_client: Iliad API client
         attachment_fetcher: Attachment processing component
+        attachment_deduplicator: Duplicate attachment detection component
         metadata_extractor: Metadata extraction component
         completeness_assessor: Completeness assessment component
         process_attachments: Whether to process attachments
+        deduplicate_attachments: Whether to deduplicate attachments
 
     Example:
         >>> pipeline = PreprocessingPipeline.from_env()
@@ -64,6 +97,7 @@ class PreprocessingPipeline:
         iliad_client: Optional[IliadClient] = None,
         attachment_storage_path: str = "Data_Storage/attachments",
         process_attachments: bool = True,
+        deduplicate_attachments: bool = True,
         extract_technologies: bool = True,
         use_llm_completeness: bool = False,
     ) -> None:
@@ -74,12 +108,14 @@ class PreprocessingPipeline:
             iliad_client: Iliad API client (required for LLM features)
             attachment_storage_path: Path to store downloaded attachments
             process_attachments: Whether to fetch and process attachments
+            deduplicate_attachments: Whether to deduplicate attachments with LLM
             extract_technologies: Whether to extract technologies with LLM
             use_llm_completeness: Whether to use LLM for completeness assessment
         """
         self.confluence_client = confluence_client
         self.iliad_client = iliad_client
         self.process_attachments_enabled = process_attachments and confluence_client is not None
+        self.deduplicate_attachments_enabled = deduplicate_attachments and iliad_client is not None
         self.extract_technologies = extract_technologies
         self.use_llm_completeness = use_llm_completeness
 
@@ -93,6 +129,12 @@ class PreprocessingPipeline:
         else:
             self.attachment_fetcher = None
 
+        # Initialize deduplicator if enabled
+        if self.deduplicate_attachments_enabled:
+            self.attachment_deduplicator = AttachmentDeduplicator(iliad_client)
+        else:
+            self.attachment_deduplicator = None
+
         if iliad_client:
             self.metadata_extractor = MetadataExtractor(iliad_client)
         else:
@@ -103,6 +145,7 @@ class PreprocessingPipeline:
         logger.info(
             f"Initialized PreprocessingPipeline "
             f"(attachments: {self.process_attachments_enabled}, "
+            f"deduplication: {self.deduplicate_attachments_enabled}, "
             f"technologies: {extract_technologies}, "
             f"llm_completeness: {use_llm_completeness})"
         )
@@ -111,6 +154,7 @@ class PreprocessingPipeline:
     def from_env(
         cls,
         process_attachments: bool = True,
+        deduplicate_attachments: bool = True,
         extract_technologies: bool = True,
         use_llm_completeness: bool = False,
     ) -> "PreprocessingPipeline":
@@ -127,6 +171,7 @@ class PreprocessingPipeline:
 
         Args:
             process_attachments: Whether to process attachments
+            deduplicate_attachments: Whether to deduplicate attachments with LLM
             extract_technologies: Whether to extract technologies
             use_llm_completeness: Whether to use LLM for completeness
 
@@ -172,6 +217,7 @@ class PreprocessingPipeline:
             iliad_client=iliad_client,
             attachment_storage_path=attachment_path,
             process_attachments=process_attachments,
+            deduplicate_attachments=deduplicate_attachments,
             extract_technologies=extract_technologies,
             use_llm_completeness=use_llm_completeness,
         )
@@ -179,18 +225,25 @@ class PreprocessingPipeline:
     def process_page_attachments(
         self,
         pages: List[Dict[str, Any]],
+        parallel_config: Optional[ParallelConfig] = None,
     ) -> List[Dict[str, Any]]:
         """
         Process attachments for all pages.
 
         Args:
             pages: List of page dictionaries
+            parallel_config: Optional parallel processing configuration
 
         Returns:
             Updated pages with attachment_content field
 
         Example:
             >>> pages = pipeline.process_page_attachments(pages)
+            >>> # With parallel processing
+            >>> pages = pipeline.process_page_attachments(
+            ...     pages,
+            ...     parallel_config=ParallelConfig(enabled=True)
+            ... )
         """
         if not self.attachment_fetcher:
             logger.warning("Attachment fetcher not available - skipping")
@@ -199,7 +252,12 @@ class PreprocessingPipeline:
                 page.setdefault("attachment_content", "")
             return pages
 
-        logger.info(f"Processing attachments for {len(pages)} pages")
+        # Use parallel processing if configured
+        if parallel_config and parallel_config.enabled:
+            return self._process_page_attachments_parallel(pages, parallel_config)
+
+        # Sequential processing (original implementation)
+        logger.info(f"Processing attachments for {len(pages)} pages (sequential)")
 
         for i, page in enumerate(pages):
             page_id = page.get("id", "")
@@ -233,6 +291,145 @@ class PreprocessingPipeline:
         logger.info(f"  - {with_attachments}/{len(pages)} pages have attachments")
         logger.info(f"  - {with_content}/{len(pages)} pages have extracted content")
 
+        # Merge attachment content into content_text
+        pages = self._merge_attachment_content_all(pages)
+
+        return pages
+
+    def _merge_attachment_content(self, page: Dict[str, Any]) -> str:
+        """
+        Merge attachment content into content_text for a single page.
+
+        Appends attachment content to the end of content_text with a
+        clear separator for better RAG retrieval.
+
+        Args:
+            page: Page dictionary with content_text and attachment_content
+
+        Returns:
+            Merged content string
+        """
+        content_text = page.get("content_text", "") or ""
+        attachment_content = page.get("attachment_content", "") or ""
+
+        if not attachment_content.strip():
+            return content_text
+
+        if not content_text.strip():
+            return attachment_content
+
+        # Add clear separator and append attachment content
+        separator = "\n\n--- ATTACHMENT CONTENT ---\n\n"
+        return f"{content_text}{separator}{attachment_content}"
+
+    def _merge_attachment_content_all(
+        self, pages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Merge attachment content into content_text for all pages.
+
+        This integrates attachment text into the main content field
+        so it's available during RAG retrieval and vectorization.
+
+        Args:
+            pages: List of page dictionaries
+
+        Returns:
+            Updated pages with merged content_text
+        """
+        merged_count = 0
+        for page in pages:
+            attachment_content = page.get("attachment_content", "") or ""
+            if attachment_content.strip():
+                page["content_text"] = self._merge_attachment_content(page)
+                merged_count += 1
+
+        if merged_count > 0:
+            logger.info(f"Merged attachment content into content_text for {merged_count} pages")
+
+        return pages
+
+    def _process_page_attachments_parallel(
+        self,
+        pages: List[Dict[str, Any]],
+        config: ParallelConfig,
+    ) -> List[Dict[str, Any]]:
+        """
+        Process attachments in parallel.
+
+        Args:
+            pages: List of page dictionaries
+            config: Parallel processing configuration
+
+        Returns:
+            Updated pages with attachment_content field
+        """
+        logger.info(
+            f"Processing attachments for {len(pages)} pages (parallel: "
+            f"pages={config.max_workers_pages}, attachments={config.max_workers_attachments}, "
+            f"rps={config.rate_limit_rps}, batch={config.batch_size})"
+        )
+
+        # Get page IDs
+        page_ids = [p.get("id", "") for p in pages]
+        page_id_to_index = {p.get("id", ""): i for i, p in enumerate(pages)}
+
+        # First: Fetch attachment metadata for all pages (relatively fast)
+        logger.info("Fetching attachment metadata for all pages...")
+        for page in pages:
+            page_id = page.get("id", "")
+            try:
+                attachments = self.attachment_fetcher.fetch_page_attachments(page_id)
+                page["attachments"] = attachments
+            except Exception as e:
+                logger.warning(f"Failed to fetch attachments for page {page_id}: {e}")
+                page["attachments"] = []
+
+        # Filter to pages with attachments
+        pages_with_attachments = [
+            (p.get("id", ""), i) for i, p in enumerate(pages) if p.get("attachments")
+        ]
+
+        if not pages_with_attachments:
+            logger.info("No pages have attachments - skipping parallel processing")
+            for page in pages:
+                page["attachment_content"] = ""
+            return pages
+
+        logger.info(f"{len(pages_with_attachments)} pages have attachments to process")
+
+        # Process attachments in parallel
+        page_ids_to_process = [pid for pid, _ in pages_with_attachments]
+
+        results = self.attachment_fetcher.process_pages_parallel(
+            page_ids_to_process,
+            max_workers_pages=config.max_workers_pages,
+            max_workers_attachments=config.max_workers_attachments,
+            rate_limit_rps=config.rate_limit_rps,
+            batch_size=config.batch_size,
+            cleanup=True,
+        )
+
+        # Update pages with results
+        for page_id, content in results.items():
+            if page_id in page_id_to_index:
+                pages[page_id_to_index[page_id]]["attachment_content"] = content
+
+        # Ensure all pages have the field
+        for page in pages:
+            page.setdefault("attachment_content", "")
+
+        # Log summary
+        with_attachments = sum(1 for p in pages if p.get("attachments"))
+        with_content = sum(1 for p in pages if p.get("attachment_content"))
+
+        logger.info(f"Attachment processing complete (parallel):")
+        logger.info(f"  - {with_attachments}/{len(pages)} pages have attachments")
+        logger.info(f"  - {with_content}/{len(pages)} pages have extracted content")
+
+        # Merge attachment content into content_text
+        pages = self._merge_attachment_content_all(pages)
+
         return pages
 
     def _extract_parent_project_basic(self, page_data: Dict[str, Any]) -> Optional[str]:
@@ -240,7 +437,7 @@ class PreprocessingPipeline:
         Extract parent project using hierarchy only (no LLM needed).
 
         Args:
-            page_data: Page dictionary with ancestors
+            page_data: Page dictionary with parents
 
         Returns:
             Parent project name or None
@@ -257,33 +454,59 @@ class PreprocessingPipeline:
             title_lower = title.lower()
             return any(root.lower() in title_lower for root in DSA_PROJECT_ROOTS)
 
-        ancestors = page_data.get("ancestors", [])
+        parents = page_data.get("parents", [])
         title = page_data.get("title", "")
 
-        if not ancestors:
+        if not parents:
             return None
 
-        # Find the project root in ancestors
+        # Find the project root in parents
         root_index = None
-        for i, ancestor in enumerate(ancestors):
-            ancestor_title = ancestor.get("title", "")
-            if is_project_root(ancestor_title):
+        for i, parent in enumerate(parents):
+            parent_title = parent.get("title", "")
+            if is_project_root(parent_title):
                 root_index = i
                 break
 
         if root_index is None:
             return None
 
-        # The project name is the ancestor immediately after the root
+        # The project name is the parent immediately after the root
         project_index = root_index + 1
-        if project_index < len(ancestors):
-            return ancestors[project_index].get("title", "")
+        if project_index < len(parents):
+            return parents[project_index].get("title", "")
         else:
             return title
+
+    def _extract_main_project_basic(
+        self, page_data: Dict[str, Any]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Extract main project (depth 3 ancestor) using hierarchy only.
+
+        Args:
+            page_data: Page dictionary with parents
+
+        Returns:
+            Tuple of (main_project_name, main_project_id)
+        """
+        parents = page_data.get("parents", [])
+        depth = page_data.get("depth", len(parents) + 1)
+        title = page_data.get("title", "")
+        page_id = page_data.get("id", "")
+
+        if depth <= 2:
+            return (None, None)
+        if depth == 3:
+            return (title, page_id)
+        if len(parents) >= 3:
+            return (parents[2].get("title", ""), parents[2].get("id", ""))
+        return (None, None)
 
     def process_metadata(
         self,
         pages: List[Dict[str, Any]],
+        parallel_config: Optional[ParallelConfig] = None,
     ) -> List[Dict[str, Any]]:
         """
         Extract metadata for all pages.
@@ -294,29 +517,52 @@ class PreprocessingPipeline:
 
         Args:
             pages: List of page dictionaries
+            parallel_config: Optional parallel processing configuration
 
         Returns:
             Updated pages with metadata fields
 
         Example:
             >>> pages = pipeline.process_metadata(pages)
+            >>> # With parallel processing
+            >>> pages = pipeline.process_metadata(
+            ...     pages,
+            ...     parallel_config=ParallelConfig(enabled=True)
+            ... )
         """
         logger.info(f"Extracting metadata for {len(pages)} pages")
 
-        # Always extract parent_project (doesn't need LLM)
+        # Always extract parent_project and main_project (doesn't need LLM)
         for page in pages:
             if page.get("parent_project") is None:
                 page["parent_project"] = self._extract_parent_project_basic(page)
 
+            if page.get("main_project") is None:
+                main_project, main_project_id = self._extract_main_project_basic(page)
+                page["main_project"] = main_project
+                page["main_project_id"] = main_project_id
+
         with_project = sum(1 for p in pages if p.get("parent_project"))
+        with_main = sum(1 for p in pages if p.get("main_project"))
         logger.info(f"  - {with_project}/{len(pages)} pages have parent_project")
+        logger.info(f"  - {with_main}/{len(pages)} pages have main_project")
 
         # Extract technologies only if LLM available and enabled
         if self.metadata_extractor and self.extract_technologies:
-            pages = self.metadata_extractor.process_pages(
-                pages,
-                extract_technologies=True,
-            )
+            # Use parallel processing if configured
+            if parallel_config and parallel_config.enabled:
+                pages = self.metadata_extractor.process_pages_parallel(
+                    pages,
+                    extract_technologies=True,
+                    max_workers=parallel_config.max_workers_metadata,
+                    rate_limit_rps=parallel_config.rate_limit_rps,
+                    batch_size=parallel_config.batch_size,
+                )
+            else:
+                pages = self.metadata_extractor.process_pages(
+                    pages,
+                    extract_technologies=True,
+                )
         else:
             if self.extract_technologies:
                 logger.warning("Technology extraction skipped - metadata extractor not available")
@@ -350,7 +596,7 @@ class PreprocessingPipeline:
 
     def _recalculate_depth(self, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Recalculate depth for all pages from ancestors.
+        Recalculate depth for all pages from parents.
 
         This ensures depth is always valid even if the original JSON
         has depth=None or incorrect values.
@@ -363,8 +609,8 @@ class PreprocessingPipeline:
         """
         updated = 0
         for page in pages:
-            ancestors = page.get("ancestors", [])
-            calculated_depth = len(ancestors) + 1
+            parents = page.get("parents", [])
+            calculated_depth = len(parents) + 1
             current_depth = page.get("depth")
 
             if current_depth is None or current_depth != calculated_depth:
@@ -383,15 +629,17 @@ class PreprocessingPipeline:
         skip_attachments: bool = False,
         skip_technologies: bool = False,
         skip_completeness: bool = False,
+        parallel: bool = False,
+        parallel_config: Optional[ParallelConfig] = None,
     ) -> List[Dict[str, Any]]:
         """
         Run complete preprocessing pipeline on a JSON file.
 
         Steps:
         1. Load pages from JSON
-        2. Recalculate depth from ancestors
-        3. Process attachments (optional)
-        4. Extract metadata
+        2. Recalculate depth from parents
+        3. Process attachments (optional, can be parallelized)
+        4. Extract metadata (can be parallelized)
         5. Assess completeness
         6. Save enhanced JSON
 
@@ -401,17 +649,31 @@ class PreprocessingPipeline:
             skip_attachments: Skip attachment processing
             skip_technologies: Skip technology extraction
             skip_completeness: Skip completeness assessment
+            parallel: Enable parallel processing with default config
+            parallel_config: Custom parallel processing configuration
 
         Returns:
             List of processed page dictionaries
 
         Example:
             >>> pages = pipeline.process("Data_Storage/confluence_pages.json")
+            >>> # With parallel processing
+            >>> pages = pipeline.process(
+            ...     "input.json",
+            ...     parallel=True,
+            ...     parallel_config=ParallelConfig(max_workers_pages=8)
+            ... )
         """
         input_path = Path(input_path)
 
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
+
+        # Set up parallel config
+        if parallel and parallel_config is None:
+            parallel_config = ParallelConfig(enabled=True)
+        elif parallel_config is not None:
+            parallel_config.enabled = True
 
         # Load pages
         logger.info(f"Loading pages from {input_path}")
@@ -425,7 +687,7 @@ class PreprocessingPipeline:
 
         # Step 1: Process attachments
         if not skip_attachments and self.process_attachments_enabled:
-            pages = self.process_page_attachments(pages)
+            pages = self.process_page_attachments(pages, parallel_config=parallel_config)
         else:
             # Ensure fields exist
             for page in pages:
@@ -437,7 +699,7 @@ class PreprocessingPipeline:
         if skip_technologies:
             self.extract_technologies = False
 
-        pages = self.process_metadata(pages)
+        pages = self.process_metadata(pages, parallel_config=parallel_config)
 
         self.extract_technologies = old_extract
 
@@ -476,6 +738,8 @@ class PreprocessingPipeline:
         skip_attachments: bool = False,
         skip_technologies: bool = False,
         skip_completeness: bool = False,
+        parallel: bool = False,
+        parallel_config: Optional[ParallelConfig] = None,
     ) -> List[Dict[str, Any]]:
         """
         Run preprocessing on pages already in memory.
@@ -485,19 +749,29 @@ class PreprocessingPipeline:
             skip_attachments: Skip attachment processing
             skip_technologies: Skip technology extraction
             skip_completeness: Skip completeness assessment
+            parallel: Enable parallel processing with default config
+            parallel_config: Custom parallel processing configuration
 
         Returns:
             List of processed page dictionaries
 
         Example:
             >>> pages = pipeline.process_pages_in_memory(pages)
+            >>> # With parallel processing
+            >>> pages = pipeline.process_pages_in_memory(pages, parallel=True)
         """
+        # Set up parallel config
+        if parallel and parallel_config is None:
+            parallel_config = ParallelConfig(enabled=True)
+        elif parallel_config is not None:
+            parallel_config.enabled = True
+
         # Step 0: Recalculate depth for all pages
         pages = self._recalculate_depth(pages)
 
         # Step 1: Process attachments
         if not skip_attachments and self.process_attachments_enabled:
-            pages = self.process_page_attachments(pages)
+            pages = self.process_page_attachments(pages, parallel_config=parallel_config)
         else:
             for page in pages:
                 page.setdefault("attachments", [])
@@ -508,7 +782,7 @@ class PreprocessingPipeline:
         if skip_technologies:
             self.extract_technologies = False
 
-        pages = self.process_metadata(pages)
+        pages = self.process_metadata(pages, parallel_config=parallel_config)
 
         self.extract_technologies = old_extract
 
@@ -533,11 +807,17 @@ def main():
         --skip-attachments  Skip attachment processing
         --skip-technologies Skip technology extraction
         --skip-completeness Skip completeness assessment
+        --parallel          Enable parallel processing
+        --workers-pages N   Max concurrent page processing (default: 8)
+        --workers-att N     Max concurrent attachments per page (default: 4)
+        --rate-limit N      Requests per second limit (default: 10.0)
+        --batch-size N      Batch size for parallel processing (default: 50)
 
     Examples:
         python -m preprocessing.processor
         python -m preprocessing.processor Data_Storage/confluence_pages.json
-        python -m preprocessing.processor input.json output.json --skip-attachments
+        python -m preprocessing.processor input.json output.json --parallel
+        python -m preprocessing.processor input.json --parallel --workers-pages 16
     """
     import argparse
 
@@ -571,6 +851,35 @@ def main():
         action="store_true",
         help="Skip completeness assessment",
     )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Enable parallel processing",
+    )
+    parser.add_argument(
+        "--workers-pages",
+        type=int,
+        default=8,
+        help="Max concurrent page processing (default: 8)",
+    )
+    parser.add_argument(
+        "--workers-att",
+        type=int,
+        default=4,
+        help="Max concurrent attachments per page (default: 4)",
+    )
+    parser.add_argument(
+        "--rate-limit",
+        type=float,
+        default=10.0,
+        help="Requests per second limit (default: 10.0)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50,
+        help="Batch size for parallel processing (default: 50)",
+    )
 
     args = parser.parse_args()
 
@@ -579,6 +888,19 @@ def main():
     skip_attachments = args.skip_attachments
     skip_technologies = args.skip_technologies
     skip_completeness = args.skip_completeness
+    use_parallel = args.parallel
+
+    # Build parallel config if enabled
+    parallel_config = None
+    if use_parallel:
+        parallel_config = ParallelConfig(
+            enabled=True,
+            max_workers_pages=args.workers_pages,
+            max_workers_attachments=args.workers_att,
+            max_workers_metadata=args.workers_pages,  # Same as pages
+            rate_limit_rps=args.rate_limit,
+            batch_size=args.batch_size,
+        )
 
     logger.info("=" * 60)
     logger.info("CONFLUENCE RAG PREPROCESSING PIPELINE")
@@ -602,6 +924,8 @@ def main():
             skip_attachments=skip_attachments,
             skip_technologies=skip_technologies,
             skip_completeness=skip_completeness,
+            parallel=use_parallel,
+            parallel_config=parallel_config,
         )
 
         # Print summary
