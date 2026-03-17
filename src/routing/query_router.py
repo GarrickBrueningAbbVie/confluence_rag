@@ -65,7 +65,7 @@ class QueryRouter:
         db_pipeline: Optional["DatabasePipeline"] = None,
         iliad_client: Optional["IliadClient"] = None,
         use_llm_fallback: bool = False,
-        use_smart_routing: bool = False,
+        use_smart_routing: bool = True,
         use_entity_routing: bool = True,
     ) -> None:
         """Initialize query router.
@@ -156,11 +156,15 @@ class QueryRouter:
         # Determine if we should use smart routing
         should_use_smart = use_smart if use_smart is not None else self.use_smart_routing
 
+        logger.info(f"Routing query: '{query[:100]}{'...' if len(query) > 100 else ''}'")
+
         # Use smart router if enabled and no forced intent
         if should_use_smart and self.smart_router and not force_intent:
+            logger.info("Route selected: SMART (LLM-based query decomposition)")
             return self._route_smart(query, return_metadata)
 
         # Fall back to rule-based routing
+        logger.info("Route selected: RULE-BASED (keyword matching)")
         result = {
             "success": False,
             "answer": None,
@@ -179,11 +183,15 @@ class QueryRouter:
                 len(processed_query.potential_project_names) > 0 or
                 len(processed_query.potential_person_names) > 0
             )
-            logger.info(
-                f"Entity extraction - Projects: {processed_query.potential_project_names}, "
-                f"People: {processed_query.potential_person_names}, "
-                f"Has entities: {has_entities}"
-            )
+            logger.info("Entity extraction results:")
+            if processed_query.potential_project_names:
+                logger.info(f"  Projects: {processed_query.potential_project_names}")
+            if processed_query.potential_person_names:
+                logger.info(f"  People: {processed_query.potential_person_names}")
+            if processed_query.query_intent:
+                logger.info(f"  Query intent: {processed_query.query_intent}")
+            if not has_entities:
+                logger.info("  No entities extracted from query")
 
         # Classify intent
         if force_intent:
@@ -236,22 +244,28 @@ class QueryRouter:
                 }
 
         logger.info(
-            f"Query classified as {final_intent.value} "
+            f"Query classified as {final_intent.value.upper()} "
             f"(original: {classification.intent.value}, confidence: {classification.confidence:.2f})"
         )
+        if routing_override:
+            logger.info(f"Routing override applied: {routing_override}")
 
         # Route based on final intent
         try:
             if final_intent == QueryIntent.DATABASE:
+                logger.info("Executing pipeline: DATABASE (structured query)")
                 result = self._route_database(query, result)
 
             elif final_intent == QueryIntent.RAG:
+                logger.info("Executing pipeline: RAG (semantic search)")
                 result = self._route_rag(query, result)
 
             elif final_intent == QueryIntent.HYBRID:
+                logger.info("Executing pipeline: HYBRID (RAG + Database)")
                 result = self._route_hybrid(query, result)
 
             elif final_intent == QueryIntent.CHART:
+                logger.info("Executing pipeline: CHART (visualization)")
                 result = self._route_chart(query, result)
 
         except Exception as e:
@@ -277,6 +291,15 @@ class QueryRouter:
         logger.info("Using smart LLM-based routing")
 
         smart_result = self.smart_router.route(query)
+
+        # Log extracted sub-queries
+        if smart_result.sub_results:
+            logger.info(f"Smart routing decomposed into {len(smart_result.sub_results)} sub-queries:")
+            for i, sr in enumerate(smart_result.sub_results, 1):
+                status = "✓" if sr.success else "✗"
+                logger.info(f"  [{i}] {status} [{sr.sub_query.intent.value.upper()}] {sr.sub_query.text}")
+        else:
+            logger.info("Smart routing: No sub-queries extracted (treated as single query)")
 
         # Convert to standard result format
         result = {
