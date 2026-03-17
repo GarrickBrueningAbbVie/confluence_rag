@@ -300,6 +300,8 @@ class ResultAggregator:
                 SubQueryIntent.RAG: "Documentation",
                 SubQueryIntent.DATABASE: "Data Query",
                 SubQueryIntent.HYBRID: "Combined",
+                SubQueryIntent.CHART: "Visualization",
+                SubQueryIntent.TABLE: "Table",
             }.get(result.sub_query.intent, "Result")
 
             answer = self._format_single_answer(result)

@@ -53,6 +53,18 @@ class DataFrameLoader:
         "content_text",
     ]
 
+    # Columns that get lowercase versions for case-insensitive search
+    LOWERCASE_COLUMNS = [
+        "title",
+        "parent_project",
+        "created_by",
+    ]
+
+    # List columns that get lowercase versions
+    LOWERCASE_LIST_COLUMNS = [
+        "technologies",
+    ]
+
     def __init__(self, json_path: Union[str, Path]) -> None:
         """Initialize the loader.
 
@@ -104,6 +116,9 @@ class DataFrameLoader:
 
         # Convert types
         self._convert_types()
+
+        # Create lowercase columns for case-insensitive searching
+        self._create_lowercase_columns()
 
         logger.info(f"Loaded {len(self.df)} pages with {len(self.df.columns)} columns")
 
@@ -161,6 +176,37 @@ class DataFrameLoader:
 
         logger.debug("Converted column types")
 
+    def _create_lowercase_columns(self) -> None:
+        """Create lowercase versions of text columns for case-insensitive search.
+
+        Creates columns like 'title_lower', 'parent_project_lower' etc.
+        that contain lowercase versions of the original text for matching.
+        The original columns are preserved for display purposes.
+        """
+        if self.df is None:
+            return
+
+        # Create lowercase versions of string columns
+        for col in self.LOWERCASE_COLUMNS:
+            if col in self.df.columns:
+                lower_col = f"{col}_lower"
+                self.df[lower_col] = self.df[col].apply(
+                    lambda x: x.lower() if isinstance(x, str) else x
+                )
+
+        # Create lowercase versions of list columns (e.g., technologies)
+        for col in self.LOWERCASE_LIST_COLUMNS:
+            if col in self.df.columns:
+                lower_col = f"{col}_lower"
+                self.df[lower_col] = self.df[col].apply(
+                    lambda x: [item.lower() for item in x] if isinstance(x, list) else x
+                )
+
+        logger.debug(
+            f"Created lowercase columns: "
+            f"{[f'{c}_lower' for c in self.LOWERCASE_COLUMNS + self.LOWERCASE_LIST_COLUMNS]}"
+        )
+
     def get_schema(self) -> Dict[str, str]:
         """
         Get DataFrame schema information.
@@ -185,7 +231,10 @@ class DataFrameLoader:
 
         info_lines = ["Available columns:"]
 
-        for col in self.df.columns:
+        # Document primary columns (exclude _lower columns from main list)
+        primary_cols = [c for c in self.df.columns if not c.endswith("_lower")]
+
+        for col in primary_cols:
             dtype = str(self.df[col].dtype)
             non_null = self.df[col].notna().sum()
             total = len(self.df)
@@ -214,6 +263,14 @@ class DataFrameLoader:
                 sample = ""
 
             info_lines.append(f"  - {col} ({dtype}): {non_null}/{total} non-null. {sample}")
+
+        # Document lowercase columns
+        lower_cols = [c for c in self.df.columns if c.endswith("_lower")]
+        if lower_cols:
+            info_lines.append("\nLowercase columns for case-insensitive search:")
+            for col in lower_cols:
+                original_col = col.replace("_lower", "")
+                info_lines.append(f"  - {col}: lowercase version of '{original_col}' for case-insensitive matching")
 
         return "\n".join(info_lines)
 

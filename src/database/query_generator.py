@@ -25,16 +25,23 @@ except ImportError:
 
 
 # Few-shot examples for query generation
+# NOTE: All string matching uses _lower columns for case-insensitive search
+# but returns data from original columns for proper display
 FEW_SHOT_EXAMPLES = [
     {
         "question": "How many pages has John Smith created?",
-        "query": "df[df['created_by'] == 'John Smith'].shape[0]",
-        "explanation": "Filter by created_by column and count rows",
+        "query": "df[df['created_by_lower'] == 'john smith'].shape[0]",
+        "explanation": "Use created_by_lower for case-insensitive matching, lowercase the search term",
     },
     {
         "question": "What products use airflow?",
-        "query": "df[df['technologies'].apply(lambda x: 'Airflow' in x if isinstance(x, list) else False)]['title'].tolist()",
-        "explanation": "Filter where technologies list contains Airflow, return titles",
+        "query": "df[df['technologies_lower'].apply(lambda x: 'airflow' in x if isinstance(x, list) else False)]['title'].tolist()",
+        "explanation": "Use technologies_lower with lowercase search term for case-insensitive matching",
+    },
+    {
+        "question": "What projects use XGBoost?",
+        "query": "df[df['technologies_lower'].apply(lambda x: 'xgboost' in x if isinstance(x, list) else False)]['parent_project'].unique().tolist()",
+        "explanation": "Use technologies_lower with lowercase 'xgboost' for case-insensitive matching",
     },
     {
         "question": "List all projects with completeness score above 80",
@@ -54,7 +61,7 @@ FEW_SHOT_EXAMPLES = [
     {
         "question": "What technologies are most commonly used?",
         "query": "pd.Series([t for techs in df['technologies'].dropna() for t in techs if isinstance(techs, list)]).value_counts().head(10).to_dict()",
-        "explanation": "Flatten technologies lists, count occurrences",
+        "explanation": "Flatten technologies lists (original column for display), count occurrences",
     },
     {
         "question": "Show pages created in the last 30 days",
@@ -74,7 +81,17 @@ FEW_SHOT_EXAMPLES = [
     {
         "question": "List all unique technologies",
         "query": "sorted(set(t for techs in df['technologies'].dropna() for t in techs if isinstance(techs, list)))",
-        "explanation": "Extract and deduplicate all technologies",
+        "explanation": "Extract and deduplicate all technologies (original column for proper casing)",
+    },
+    {
+        "question": "Find pages by author sarah",
+        "query": "df[df['created_by_lower'].str.contains('sarah', na=False)][['title', 'created_by']].to_dict('records')",
+        "explanation": "Use created_by_lower for case-insensitive search, return original created_by for display",
+    },
+    {
+        "question": "List all projects that use Python",
+        "query": "df[df['technologies_lower'].apply(lambda x: 'python' in x if isinstance(x, list) else False)]['parent_project'].unique().tolist()",
+        "explanation": "Search in technologies_lower with lowercase 'python', return parent_project",
     },
 ]
 
@@ -148,7 +165,7 @@ The DataFrame is named `df` and has the following columns:
 
 CORRECT format examples:
 - df.shape[0]
-- df[df['col'] == 'value']['title'].tolist()
+- df[df['col_lower'] == 'value']['title'].tolist()
 - df.groupby('col').size().to_dict()
 
 WRONG format examples (DO NOT DO THIS):
@@ -156,8 +173,19 @@ WRONG format examples (DO NOT DO THIS):
 - filtered_df = df[df['col'] == 'value']  <-- NO variable assignments!
 - df.shape[0]; df.head()  <-- NO semicolons!
 
+## CASE-INSENSITIVE SEARCH (CRITICAL)
+For ALL string matching/filtering, use the lowercase columns (`_lower` suffix) with LOWERCASE search terms:
+- Use `technologies_lower` with lowercase term: `df[df['technologies_lower'].apply(lambda x: 'xgboost' in x if isinstance(x, list) else False)]`
+- Use `created_by_lower` with lowercase term: `df[df['created_by_lower'] == 'john smith']`
+- Use `parent_project_lower` with lowercase term: `df[df['parent_project_lower'] == 'alfa']`
+- Use `title_lower` with lowercase term: `df[df['title_lower'].str.contains('dashboard', na=False)]`
+
+ALWAYS return data from the ORIGINAL columns (without _lower) for display:
+- Filter with: `df[df['technologies_lower'].apply(lambda x: 'python' in x ...)]`
+- Return: `['title']` or `['parent_project']` (NOT the _lower versions)
+
 ## Important Notes
-- The 'technologies' column contains lists of strings (e.g., ['Python', 'Airflow'])
+- The 'technologies' and 'technologies_lower' columns contain lists of strings
 - Use .apply(lambda x: ...) to search within list columns
 - Always handle None/NaN values appropriately
 - Use .to_dict('records') to convert DataFrames to list of dicts

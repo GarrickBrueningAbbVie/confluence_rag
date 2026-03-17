@@ -60,6 +60,7 @@ class QueryRouter:
     """
 
     def __init__(
+    
         self,
         rag_pipeline: Any,  # Type hint as Any to avoid circular import
         db_pipeline: Optional["DatabasePipeline"] = None,
@@ -310,12 +311,45 @@ class QueryRouter:
             "intent": "smart",
         }
 
+        # Extract figures and tables from CHART/TABLE sub_results
+        figures = []
+        tables = []
+        for sr in smart_result.sub_results:
+            if sr.success and sr.metadata:
+                # Extract chart figures
+                if sr.metadata.get("figure"):
+                    figures.append({
+                        "figure": sr.metadata["figure"],
+                        "html": sr.metadata.get("html"),
+                        "code": sr.metadata.get("code"),
+                        "chart_type": sr.metadata.get("chart_type", "auto"),
+                        "query": sr.sub_query.text,
+                    })
+                # Extract tables
+                if sr.metadata.get("html_table"):
+                    tables.append({
+                        "html": sr.metadata["html_table"],
+                        "markdown": sr.answer,
+                        "row_count": sr.metadata.get("row_count", 0),
+                        "query": sr.sub_query.text,
+                    })
+
+        if figures:
+            result["figures"] = figures
+            logger.info(f"Extracted {len(figures)} chart figure(s) from sub-results")
+
+        if tables:
+            result["tables"] = tables
+            logger.info(f"Extracted {len(tables)} table(s) from sub-results")
+
         if return_metadata:
             result["metadata"] = {
                 "routing_mode": "smart",
                 "is_complex": smart_result.metadata.get("is_complex", False),
                 "num_sub_queries": len(smart_result.sub_results),
                 "execution_time": smart_result.execution_time,
+                "has_figures": len(figures) > 0,
+                "has_tables": len(tables) > 0,
                 "sub_queries": [
                     {
                         "text": sr.sub_query.text,

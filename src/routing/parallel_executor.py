@@ -23,6 +23,8 @@ from .query_analyzer import SubQuery, SubQueryIntent
 try:
     from database.pipeline import DatabasePipeline
     from rag.pipeline import RAGPipeline
+    from visualization.chart_generator import ChartGenerator
+    from iliad.client import IliadClient
 except ImportError:
     pass
 
@@ -91,6 +93,8 @@ class ParallelQueryExecutor:
         self,
         rag_pipeline: "RAGPipeline",
         db_pipeline: Optional["DatabasePipeline"] = None,
+        chart_generator: Optional["ChartGenerator"] = None,
+        iliad_client: Optional["IliadClient"] = None,
         max_workers: int = 4,
         timeout: float = 30.0,
     ) -> None:
@@ -99,17 +103,31 @@ class ParallelQueryExecutor:
         Args:
             rag_pipeline: RAG pipeline instance
             db_pipeline: Optional database pipeline
+            chart_generator: Optional chart generator for visualizations
+            iliad_client: Optional Iliad client for chart generation
             max_workers: Maximum concurrent workers
             timeout: Timeout per query in seconds
         """
         self.rag_pipeline = rag_pipeline
         self.db_pipeline = db_pipeline
+        self.chart_generator = chart_generator
+        self.iliad_client = iliad_client
         self.max_workers = max_workers
         self.timeout = timeout
 
+        # Initialize chart generator if not provided but iliad client is
+        if self.chart_generator is None and self.iliad_client is not None:
+            try:
+                from visualization.chart_generator import ChartGenerator
+                self.chart_generator = ChartGenerator(iliad_client=self.iliad_client)
+                logger.info("Initialized ChartGenerator for parallel executor")
+            except ImportError:
+                logger.warning("Could not import ChartGenerator")
+
         logger.info(
             f"Initialized ParallelQueryExecutor "
-            f"(workers: {max_workers}, db_pipeline: {db_pipeline is not None})"
+            f"(workers: {max_workers}, db_pipeline: {db_pipeline is not None}, "
+            f"chart_generator: {self.chart_generator is not None})"
         )
 
     def create_execution_plan(self, sub_queries: List[SubQuery]) -> ExecutionPlan:
@@ -285,6 +303,10 @@ class ParallelQueryExecutor:
                 result = self._execute_database(sub_query)
             elif sub_query.intent == SubQueryIntent.HYBRID:
                 result = self._execute_hybrid(sub_query, previous_results)
+            elif sub_query.intent == SubQueryIntent.CHART:
+                result = self._execute_chart(sub_query, previous_results)
+            elif sub_query.intent == SubQueryIntent.TABLE:
+                result = self._execute_table(sub_query, previous_results)
             else:
                 result = self._execute_rag(sub_query)  # Default fallback
 
@@ -411,6 +433,541 @@ class ParallelQueryExecutor:
                 "db_success": db_result.success,
             },
         )
+
+    def _execute_chart(
+        self,
+        sub_query: SubQuery,
+        previous_results: List[SubQueryResult],
+    ) -> SubQueryResult:
+        """Execute a chart query (visualization).
+
+        Chart queries require data to visualize. This method:
+        1. Looks for data in previous results
+        2. If not found, queries the database to get data
+        3. Generates the chart using ChartGenerator
+
+        Args:
+            sub_query: The chart sub-query
+            previous_results: Previous results that may contain data
+
+        Returns:
+            SubQueryResult with chart figure
+        """
+        if not self.chart_generator:
+            logger.warning("Chart generator not available, cannot create visualization")
+            return SubQueryResult(
+                sub_query=sub_query,
+                success=False,
+                error="Chart generation not available. ChartGenerator not initialized.",
+            )
+
+        try:
+            # Step 1: Try to get data from previous results
+            chart_data = self._extract_chart_data(previous_results)
+
+            # Step 2: If no data from previous results, query the database
+            if chart_data is None and self.db_pipeline:
+                logger.info("No chart data in previous results, querying database")
+                # Generate a database query to get data for the chart
+                data_query = self._generate_data_query_for_chart(sub_query.text)
+                db_result = self.db_pipeline.query(data_query)
+
+                if db_result.get("success") and db_result.get("answer"):
+                    chart_data = db_result["answer"]
+                    logger.info(f"Got chart data from database: {type(chart_data)}")
+
+            if chart_data is None:
+                return SubQueryResult(
+                    sub_query=sub_query,
+                    success=False,
+                    error="No data available for chart. Run a database query first or ensure data is available.",
+                )
+
+            # Step 3: Detect chart type from query
+            chart_type = self._detect_chart_type(sub_query.text)
+
+            # Step 4: Generate the chart
+            logger.info(f"Generating {chart_type} chart")
+            chart_result = self.chart_generator.generate(
+                request=sub_query.text,
+                data=chart_data,
+                chart_type=chart_type,
+            )
+
+            if chart_result.get("success"):
+                return SubQueryResult(
+                    sub_query=sub_query,
+                    success=True,
+                    answer=f"Generated {chart_type} chart successfully",
+                    metadata={
+                        "figure": chart_result.get("figure"),
+                        "html": chart_result.get("html"),
+                        "code": chart_result.get("code"),
+                        "chart_type": chart_type,
+                    },
+                )
+            else:
+                return SubQueryResult(
+                    sub_query=sub_query,
+                    success=False,
+                    error=chart_result.get("error", "Chart generation failed"),
+                )
+
+        except Exception as e:
+            logger.error(f"Chart execution failed: {e}")
+            return SubQueryResult(
+                sub_query=sub_query,
+                success=False,
+                error=f"Chart error: {str(e)}",
+            )
+
+    def _extract_chart_data(
+        self,
+        previous_results: List[SubQueryResult],
+    ) -> Optional[Any]:
+        """Extract chartable data from previous results.
+
+        Args:
+            previous_results: List of previous SubQueryResults
+
+        Returns:
+            Data suitable for charting, or None
+        """
+        for result in reversed(previous_results):  # Check most recent first
+            if not result.success:
+                continue
+
+            # Check answer for chartable data
+            answer = result.answer
+            if self._is_chartable(answer):
+                return answer
+
+            # Check metadata for raw result
+            raw = result.metadata.get("raw_result")
+            if raw and self._is_chartable(raw):
+                return raw
+
+        return None
+
+    def _is_chartable(self, data: Any) -> bool:
+        """Check if data can be charted.
+
+        Args:
+            data: Data to check
+
+        Returns:
+            True if data can be visualized
+        """
+        if data is None:
+            return False
+
+        if isinstance(data, dict) and len(data) > 0:
+            return True
+
+        if isinstance(data, list) and len(data) > 0:
+            return True
+
+        return False
+
+    def _detect_chart_type(self, query: str) -> str:
+        """Detect chart type from query.
+
+        Args:
+            query: Chart request query
+
+        Returns:
+            Chart type string
+        """
+        query_lower = query.lower()
+
+        # Explicit chart type keywords (highest priority)
+        explicit_keywords = {
+            "bar chart": "bar",
+            "bar graph": "bar",
+            "column chart": "bar",
+            "pie chart": "pie",
+            "pie graph": "pie",
+            "donut chart": "pie",
+            "line chart": "line",
+            "line graph": "line",
+            "scatter chart": "scatter",
+            "scatter plot": "scatter",
+            "histogram": "histogram",
+        }
+
+        for keyword, chart_type in explicit_keywords.items():
+            if keyword in query_lower:
+                return chart_type
+
+        # Implicit keywords (second priority)
+        implicit_keywords = {
+            "bar": "bar",
+            "column": "bar",
+            "pie": "pie",
+            "donut": "pie",
+            "line": "line",
+            "trend": "line",
+            "time series": "line",
+            "over time": "line",
+            "timeline": "line",
+            "scatter": "scatter",
+            "distribution": "histogram",
+        }
+
+        for keyword, chart_type in implicit_keywords.items():
+            if keyword in query_lower:
+                return chart_type
+
+        # Temporal indicators suggest line chart
+        temporal_indicators = [
+            "when", "timeline", "created", "modified", "date",
+            "time", "history", "progression", "growth", "trend",
+            "monthly", "weekly", "daily", "yearly", "annual",
+        ]
+
+        if any(ind in query_lower for ind in temporal_indicators):
+            return "line"
+
+        # Comparison/ranking indicators suggest bar chart
+        comparison_indicators = [
+            "most", "top", "highest", "lowest", "ranking",
+            "compare", "comparison", "by user", "by author",
+            "per project", "per team", "by project", "by team",
+        ]
+
+        if any(ind in query_lower for ind in comparison_indicators):
+            return "bar"
+
+        return "auto"
+
+    def _generate_data_query_for_chart(self, chart_query: str) -> str:
+        """Generate a database query to get data for a chart.
+
+        Extracts the data aspect from the chart query.
+
+        Args:
+            chart_query: The chart request
+
+        Returns:
+            Modified query for data retrieval
+        """
+        # Remove chart-specific words to get the data query
+        chart_words = [
+            "chart", "graph", "plot", "visualize", "visualization",
+            "show", "create", "make", "draw", "display",
+            "bar", "pie", "line", "scatter", "histogram",
+        ]
+
+        query_lower = chart_query.lower()
+
+        # Extract the data aspect
+        for word in chart_words:
+            query_lower = query_lower.replace(word, "")
+
+        # Clean up and return as a data query
+        data_query = query_lower.strip()
+        if not data_query:
+            data_query = chart_query  # Fallback to original
+
+        # Prepend "get" or "count" if appropriate
+        if "by" in data_query or "per" in data_query:
+            if not any(data_query.startswith(w) for w in ["count", "get", "list", "show"]):
+                data_query = f"count {data_query}"
+
+        return data_query
+
+    def _execute_table(
+        self,
+        sub_query: SubQuery,
+        previous_results: List[SubQueryResult],
+    ) -> SubQueryResult:
+        """Execute a table query (tabular data display).
+
+        Table queries format data as structured tables. This method:
+        1. Looks for data in previous results
+        2. If not found, queries the database to get data
+        3. Formats the data as a markdown/HTML table
+
+        Args:
+            sub_query: The table sub-query
+            previous_results: Previous results that may contain data
+
+        Returns:
+            SubQueryResult with formatted table
+        """
+        try:
+            # Step 1: Try to get data from previous results
+            table_data = self._extract_chart_data(previous_results)  # Reuse chart data extraction
+
+            # Step 2: If no data from previous results, query the database
+            if table_data is None and self.db_pipeline:
+                logger.info("No table data in previous results, querying database")
+                # Generate a database query to get data for the table
+                data_query = self._generate_data_query_for_table(sub_query.text)
+                db_result = self.db_pipeline.query(data_query)
+
+                if db_result.get("success") and db_result.get("answer"):
+                    table_data = db_result["answer"]
+                    logger.info(f"Got table data from database: {type(table_data)}")
+
+            if table_data is None:
+                return SubQueryResult(
+                    sub_query=sub_query,
+                    success=False,
+                    error="No data available for table. Run a database query first or ensure data is available.",
+                )
+
+            # Step 3: Format as table
+            logger.info("Formatting data as table")
+            markdown_table, html_table = self._format_as_table(table_data, sub_query.text)
+
+            return SubQueryResult(
+                sub_query=sub_query,
+                success=True,
+                answer=markdown_table,
+                metadata={
+                    "html_table": html_table,
+                    "row_count": self._count_rows(table_data),
+                    "raw_data": table_data,
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Table execution failed: {e}")
+            return SubQueryResult(
+                sub_query=sub_query,
+                success=False,
+                error=f"Table error: {str(e)}",
+            )
+
+    def _generate_data_query_for_table(self, table_query: str) -> str:
+        """Generate a database query to get data for a table.
+
+        Extracts the data aspect from the table query.
+
+        Args:
+            table_query: The table request
+
+        Returns:
+            Modified query for data retrieval
+        """
+        # Remove table-specific words to get the data query
+        table_words = [
+            "table", "tabular", "format", "display", "show",
+            "create", "make", "generate", "as a", "in a",
+        ]
+
+        query_lower = table_query.lower()
+
+        # Extract the data aspect
+        for word in table_words:
+            query_lower = query_lower.replace(word, "")
+
+        # Clean up and return as a data query
+        data_query = query_lower.strip()
+        if not data_query:
+            data_query = table_query  # Fallback to original
+
+        # Prepend "list" if appropriate
+        if not any(data_query.startswith(w) for w in ["list", "get", "show", "find"]):
+            data_query = f"list {data_query}"
+
+        return data_query
+
+    def _format_as_table(
+        self,
+        data: Any,
+        query: str = "",
+    ) -> tuple:
+        """Format data as markdown and HTML tables.
+
+        Args:
+            data: Data to format (dict or list)
+            query: Original query for context
+
+        Returns:
+            Tuple of (markdown_table, html_table)
+        """
+        if isinstance(data, dict):
+            # Simple key-value dict
+            if all(not isinstance(v, (dict, list)) for v in data.values()):
+                return self._format_dict_table(data)
+            # Dict with complex values - try to extract records
+            if len(data) > 0:
+                first_value = next(iter(data.values()))
+                if isinstance(first_value, list):
+                    # Nested structure - flatten if possible
+                    return self._format_nested_dict_table(data)
+
+        if isinstance(data, list):
+            if len(data) == 0:
+                return "No data available.", "<p>No data available.</p>"
+
+            if isinstance(data[0], dict):
+                return self._format_records_table(data)
+            else:
+                return self._format_simple_list_table(data)
+
+        # Fallback for other types
+        return str(data), f"<pre>{str(data)}</pre>"
+
+    def _format_dict_table(self, data: Dict[str, Any]) -> tuple:
+        """Format a simple dict as a two-column table.
+
+        Args:
+            data: Dictionary to format
+
+        Returns:
+            Tuple of (markdown_table, html_table)
+        """
+        # Markdown
+        md_lines = ["| Key | Value |", "|-----|-------|"]
+        for key, value in data.items():
+            md_lines.append(f"| {key} | {value} |")
+        markdown = "\n".join(md_lines)
+
+        # HTML
+        html_rows = "".join(
+            f"<tr><td>{key}</td><td>{value}</td></tr>"
+            for key, value in data.items()
+        )
+        html = f"<table><thead><tr><th>Key</th><th>Value</th></tr></thead><tbody>{html_rows}</tbody></table>"
+
+        return markdown, html
+
+    def _format_nested_dict_table(self, data: Dict[str, Any]) -> tuple:
+        """Format a nested dict (category -> list) as a table.
+
+        Args:
+            data: Nested dictionary to format
+
+        Returns:
+            Tuple of (markdown_table, html_table)
+        """
+        # Flatten to records
+        records = []
+        for category, values in data.items():
+            if isinstance(values, list):
+                for val in values:
+                    if isinstance(val, dict):
+                        record = {"Category": category, **val}
+                    else:
+                        record = {"Category": category, "Value": val}
+                    records.append(record)
+            else:
+                records.append({"Category": category, "Value": values})
+
+        if records:
+            return self._format_records_table(records)
+
+        return self._format_dict_table(data)
+
+    def _format_records_table(self, data: List[Dict[str, Any]]) -> tuple:
+        """Format a list of dicts as a table.
+
+        Args:
+            data: List of dictionaries (records)
+
+        Returns:
+            Tuple of (markdown_table, html_table)
+        """
+        if not data:
+            return "No data available.", "<p>No data available.</p>"
+
+        # Get all unique keys as columns
+        columns = []
+        for record in data:
+            for key in record.keys():
+                if key not in columns:
+                    columns.append(key)
+
+        # Limit columns for readability
+        max_cols = 8
+        if len(columns) > max_cols:
+            columns = columns[:max_cols]
+
+        # Markdown
+        header = "| " + " | ".join(str(col) for col in columns) + " |"
+        separator = "|" + "|".join("---" for _ in columns) + "|"
+        md_lines = [header, separator]
+
+        max_rows = 50  # Limit rows for readability
+        for record in data[:max_rows]:
+            row_values = []
+            for col in columns:
+                val = record.get(col, "")
+                # Truncate long values
+                val_str = str(val)[:50] if val else ""
+                # Escape pipe characters
+                val_str = val_str.replace("|", "\\|")
+                row_values.append(val_str)
+            md_lines.append("| " + " | ".join(row_values) + " |")
+
+        if len(data) > max_rows:
+            md_lines.append(f"\n*...and {len(data) - max_rows} more rows*")
+
+        markdown = "\n".join(md_lines)
+
+        # HTML
+        th_html = "".join(f"<th>{col}</th>" for col in columns)
+        tr_html = ""
+        for record in data[:max_rows]:
+            td_html = ""
+            for col in columns:
+                val = record.get(col, "")
+                val_str = str(val)[:100] if val else ""
+                td_html += f"<td>{val_str}</td>"
+            tr_html += f"<tr>{td_html}</tr>"
+
+        html = f"<table><thead><tr>{th_html}</tr></thead><tbody>{tr_html}</tbody></table>"
+        if len(data) > max_rows:
+            html += f"<p><em>...and {len(data) - max_rows} more rows</em></p>"
+
+        return markdown, html
+
+    def _format_simple_list_table(self, data: List[Any]) -> tuple:
+        """Format a simple list as a single-column table.
+
+        Args:
+            data: List to format
+
+        Returns:
+            Tuple of (markdown_table, html_table)
+        """
+        # Markdown
+        md_lines = ["| Value |", "|-------|"]
+        max_rows = 50
+        for item in data[:max_rows]:
+            val_str = str(item)[:100].replace("|", "\\|")
+            md_lines.append(f"| {val_str} |")
+
+        if len(data) > max_rows:
+            md_lines.append(f"\n*...and {len(data) - max_rows} more rows*")
+
+        markdown = "\n".join(md_lines)
+
+        # HTML
+        tr_html = "".join(f"<tr><td>{str(item)[:100]}</td></tr>" for item in data[:max_rows])
+        html = f"<table><thead><tr><th>Value</th></tr></thead><tbody>{tr_html}</tbody></table>"
+        if len(data) > max_rows:
+            html += f"<p><em>...and {len(data) - max_rows} more rows</em></p>"
+
+        return markdown, html
+
+    def _count_rows(self, data: Any) -> int:
+        """Count the number of rows in the data.
+
+        Args:
+            data: Data to count
+
+        Returns:
+            Number of rows
+        """
+        if isinstance(data, list):
+            return len(data)
+        if isinstance(data, dict):
+            return len(data)
+        return 1
 
     def _format_db_answer(self, answer: Any) -> str:
         """Format database answer for display.
