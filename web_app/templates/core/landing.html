@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}DSA Confluence RAG{% endblock %}
+
+{% block content %}
+<div class="landing-container">
+    <!-- Main Title -->
+    <h1 class="landing-title">
+        <span class="accent">DSA</span> Confluence RAG
+    </h1>
+
+    <!-- Search Box -->
+    <div class="search-container">
+        <form class="search-form" action="{% url 'core:search' %}" method="post">
+            {% csrf_token %}
+            <div class="search-input-wrapper">
+                <input
+                    type="text"
+                    name="query"
+                    class="search-input"
+                    placeholder="Ask a question about DSA projects..."
+                    autocomplete="off"
+                    autofocus
+                    required
+                    id="search-input"
+                >
+                <button type="submit" class="search-button">
+                    Search
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Example Queries -->
+    <div class="example-queries">
+        <h4>Try asking:</h4>
+        <ul class="example-list" id="example-list">
+            <li data-query="What is ALFA?">What is ALFA?</li>
+            <li data-query="How many pages use Python?">How many pages use Python?</li>
+            <li data-query="List projects that use XGBoost">List projects that use XGBoost</li>
+            <li data-query="Show me a chart of pages by technology">Chart of pages by technology</li>
+            <li data-query="Compare ALFA and GraphRAG projects">Compare ALFA and GraphRAG</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Click on example query to populate search box
+    document.querySelectorAll('#example-list li').forEach(function(item) {
+        item.addEventListener('click', function() {
+            const query = this.getAttribute('data-query');
+            document.getElementById('search-input').value = query;
+            document.getElementById('search-input').focus();
+        });
+    });
+
+    // Handle Enter key for search
+    document.getElementById('search-input').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter' && this.value.trim()) {
+            this.closest('form').submit();
+        }
+    });
+</script>
+{% endblock %}

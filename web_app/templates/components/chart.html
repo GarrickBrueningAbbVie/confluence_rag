@@ -1,0 +1,128 @@
+<!-- Chart Component -->
+<div class="card" id="chart-card">
+    <div class="card-header">
+        <h3 class="card-title" id="chart-title">Visualization</h3>
+        <span class="intent-badge intent-chart" id="chart-type-badge">Chart</span>
+    </div>
+    <div class="chart-container">
+        <div id="plotly-chart"></div>
+    </div>
+    <p class="chart-caption" id="chart-caption"></p>
+</div>
+
+<script>
+    function displayChart(chartData) {
+        const chartSection = document.getElementById('chart-section');
+        const chartContainer = document.getElementById('plotly-chart');
+        const chartTypeBadge = document.getElementById('chart-type-badge');
+        const chartCaption = document.getElementById('chart-caption');
+
+        chartSection.style.display = 'block';
+
+        // Check if we have a Plotly figure
+        if (chartData.figure) {
+            // Parse the figure if it's a string
+            let figureData = chartData.figure;
+            if (typeof figureData === 'string') {
+                figureData = JSON.parse(figureData);
+            }
+
+            // Apply dark theme to layout
+            const darkLayout = {
+                paper_bgcolor: '#1E1E1E',
+                plot_bgcolor: '#1E1E1E',
+                font: { color: '#FFFFFF' },
+                xaxis: {
+                    gridcolor: '#333',
+                    zerolinecolor: '#333',
+                },
+                yaxis: {
+                    gridcolor: '#333',
+                    zerolinecolor: '#333',
+                },
+                ...figureData.layout
+            };
+
+            Plotly.newPlot(chartContainer, figureData.data, darkLayout, {
+                responsive: true,
+                displayModeBar: true,
+                modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+            });
+
+            // Update chart type badge
+            if (chartData.chart_type) {
+                chartTypeBadge.textContent = chartData.chart_type.charAt(0).toUpperCase() +
+                                             chartData.chart_type.slice(1);
+            }
+
+            // Update caption
+            if (chartData.caption) {
+                chartCaption.textContent = chartData.caption;
+            }
+        } else if (chartData.html) {
+            // Fallback to HTML rendering
+            chartContainer.innerHTML = chartData.html;
+        }
+    }
+
+    function displayChartFromData(data, chartType) {
+        const chartSection = document.getElementById('chart-section');
+        const chartContainer = document.getElementById('plotly-chart');
+
+        chartSection.style.display = 'block';
+
+        // Auto-generate chart from data
+        let trace;
+        let layout;
+
+        if (chartType === 'pie' || (typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length <= 6)) {
+            // Pie chart for small datasets
+            trace = {
+                type: 'pie',
+                labels: Object.keys(data),
+                values: Object.values(data),
+                marker: {
+                    colors: ['#8A2ECC', '#0066F5', '#338700', '#CF451C', '#A86BDE', '#00A1FF']
+                },
+                textinfo: 'label+percent',
+                hoverinfo: 'label+value+percent',
+            };
+            layout = { title: 'Distribution' };
+        } else {
+            // Bar chart for larger datasets
+            trace = {
+                type: 'bar',
+                x: Object.keys(data),
+                y: Object.values(data),
+                marker: {
+                    color: '#8A2ECC',
+                },
+            };
+            layout = {
+                title: 'Results',
+                xaxis: { title: 'Category' },
+                yaxis: { title: 'Count' },
+            };
+        }
+
+        // Apply dark theme
+        layout = {
+            ...layout,
+            paper_bgcolor: '#1E1E1E',
+            plot_bgcolor: '#1E1E1E',
+            font: { color: '#FFFFFF' },
+            xaxis: {
+                ...layout.xaxis,
+                gridcolor: '#333',
+                zerolinecolor: '#333',
+            },
+            yaxis: {
+                ...layout.yaxis,
+                gridcolor: '#333',
+                zerolinecolor: '#333',
+            },
+        };
+
+        Plotly.newPlot(chartContainer, [trace], layout, { responsive: true });
+    }
+</script>

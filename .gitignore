@@ -70,6 +70,11 @@ htmlcov/
 .dmypy.json
 dmypy.json
 
+# Django
+web_app/db.sqlite3
+web_app/staticfiles/
+web_app/*.log
+
 # Data files (sensitive)
 Data_Storage/
 **/Data_Storage/

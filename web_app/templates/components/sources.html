@@ -1,0 +1,88 @@
+<!-- Sources Component -->
+<section class="sources-section">
+    <div class="sources-header">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+        </svg>
+        <h3>Sources</h3>
+        <span class="text-muted" id="sources-count"></span>
+    </div>
+
+    <div id="sources-list">
+        <!-- Sources will be populated by JavaScript -->
+    </div>
+</section>
+
+<script>
+    function displaySources(sources) {
+        const sourcesSection = document.getElementById('sources-section');
+        const sourcesList = document.getElementById('sources-list');
+        const sourcesCount = document.getElementById('sources-count');
+
+        if (!sources || sources.length === 0) {
+            return;
+        }
+
+        sourcesSection.style.display = 'block';
+
+        // Deduplicate sources by URL
+        const uniqueSources = [];
+        const seenUrls = new Set();
+
+        sources.forEach((source, idx) => {
+            const url = source.url || '';
+            if (!seenUrls.has(url)) {
+                seenUrls.add(url);
+                uniqueSources.push({
+                    ...source,
+                    documentIndices: [idx + 1],
+                });
+            } else {
+                // Add document index to existing source
+                const existing = uniqueSources.find(s => s.url === url);
+                if (existing) {
+                    existing.documentIndices.push(idx + 1);
+                }
+            }
+        });
+
+        sourcesCount.textContent = `(${uniqueSources.length} unique source${uniqueSources.length !== 1 ? 's' : ''})`;
+
+        let html = '';
+        uniqueSources.forEach((source, idx) => {
+            const title = source.title || 'Untitled';
+            const url = source.url || '#';
+            const docType = source.type || source.doc_type || 'Document';
+            const relevance = source.relevance || source.score;
+            const excerpt = source.excerpt || source.content_preview || '';
+            const docIndices = source.documentIndices || [];
+
+            html += `
+                <div class="source-item">
+                    <div class="source-title">
+                        <span style="color: var(--abbvie-purple); margin-right: 0.5rem;">${idx + 1}.</span>
+                        <a href="${url}" target="_blank" rel="noopener noreferrer">${title}</a>
+                    </div>
+                    <div class="source-meta">
+                        <span>${docType}</span>
+                        ${relevance !== undefined ? `<span>Relevance: ${(relevance * 100).toFixed(1)}%</span>` : ''}
+                        ${docIndices.length > 1 ? `<span>Documents: ${docIndices.join(', ')}</span>` : ''}
+                    </div>
+                    ${excerpt ? `<div class="source-excerpt">${truncateText(excerpt, 300)}</div>` : ''}
+                </div>
+            `;
+        });
+
+        sourcesList.innerHTML = html;
+    }
+
+    function truncateText(text, maxLength) {
+        if (!text) return '';
+        if (text.length <= maxLength) return text;
+        return text.substring(0, maxLength) + '...';
+    }
+</script>
