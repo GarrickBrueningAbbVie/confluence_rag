@@ -27,6 +27,30 @@ from .query_analyzer import LLMQueryAnalyzer, QueryAnalysisResult, SubQueryInten
 from .parallel_executor import ParallelQueryExecutor, SubQueryResult
 from .result_aggregator import ResultAggregator, AggregatedResult
 
+# Patterns for detecting list+describe queries (same as orchestrator)
+LIST_DESCRIBE_PATTERNS = [
+    "list all",
+    "list the",
+    "what projects",
+    "which projects",
+    "show all",
+    "get all",
+    "find all",
+]
+
+DESCRIBE_PATTERNS = [
+    "describe all",
+    "describe each",
+    "describe these",
+    "describe them",
+    "explain all",
+    "explain each",
+    "and describe",
+    "and explain",
+    "then describe",
+    "then explain",
+]
+
 # Import types for type hints
 try:
     from iliad.client import IliadClient
@@ -126,6 +150,7 @@ class SmartQueryRouter:
         self.executor = ParallelQueryExecutor(
             rag_pipeline=rag_pipeline,
             db_pipeline=db_pipeline,
+            iliad_client=iliad_client,
             max_workers=max_workers,
             timeout=query_timeout,
         )
@@ -224,6 +249,11 @@ class SmartQueryRouter:
         start_time = time.time()
 
         logger.info(f"Smart routing query: {query[:100]}...")
+
+        # Check for list+describe pattern - delegate to orchestrator
+        if not force_simple and self._is_list_describe_query(query):
+            logger.info("Detected list+describe pattern, using orchestrator")
+            return self.route_multistep(query)
 
         try:
             # Step 1: Analyze and decompose query
@@ -475,6 +505,30 @@ class SmartQueryRouter:
                 original_query=query,
                 metadata={"error": str(e), "routing_mode": "multi_step"},
             )
+
+    def _is_list_describe_query(self, query: str) -> bool:
+        """Check if query matches list+describe pattern.
+
+        These queries need the IterativeDescribeAgent to first get a list
+        from the database, then describe each item via RAG.
+
+        Args:
+            query: User query to check
+
+        Returns:
+            True if this is a list+describe pattern
+        """
+        query_lower = query.lower()
+
+        # Check for both list AND describe keywords
+        has_list = any(pattern in query_lower for pattern in LIST_DESCRIBE_PATTERNS)
+        has_describe = any(pattern in query_lower for pattern in DESCRIBE_PATTERNS)
+
+        if has_list and has_describe:
+            logger.debug(f"Matched list+describe pattern: list={has_list}, describe={has_describe}")
+            return True
+
+        return False
 
     def supports_multistep(self) -> bool:
         """Check if multi-step routing is available.

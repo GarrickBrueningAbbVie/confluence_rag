@@ -33,6 +33,8 @@ class SubQueryIntent(Enum):
     RAG = "rag"  # Semantic search (explain, describe, what is)
     DATABASE = "database"  # Structured query (count, list, filter, find references)
     HYBRID = "hybrid"  # Needs both pipelines combined
+    CHART = "chart"  # Visualization/charting request
+    TABLE = "table"  # Tabular data display request
 
 
 @dataclass
@@ -104,6 +106,18 @@ QUERY_ANALYSIS_PROMPT = """You are a query analyzer for a knowledge base system.
 
 **HYBRID** - Use when a SINGLE atomic question genuinely needs both semantic understanding AND structured data together (rare).
 
+**CHART** - Use for visualization/charting requests:
+- "Show a chart of X", "Create a graph of Y", "Visualize Z"
+- "Plot the distribution of...", "Bar chart showing..."
+- "Line chart of page creation over time", "Pie chart of technologies"
+- Any request for visual representation of data
+
+**TABLE** - Use for tabular data display requests:
+- "Show a table of X", "Create a table showing Y", "Display as table"
+- "Tabular format of...", "Table with columns..."
+- "Show projects in a table", "List in table format"
+- Any request for structured tabular representation of data
+
 ## Rules
 
 1. ALWAYS decompose multi-part questions into separate sub-queries
@@ -121,7 +135,7 @@ Return ONLY a JSON object:
   "sub_queries": [
     {
       "text": "The rewritten sub-query",
-      "intent": "rag" | "database" | "hybrid",
+      "intent": "rag" | "database" | "hybrid" | "chart" | "table",
       "priority": 0,
       "depends_on": null
     }
@@ -165,6 +179,44 @@ Query: "What projects does John Smith work on and what technologies do they use?
   "sub_queries": [
     {"text": "List all projects that John Smith works on or has created", "intent": "database", "priority": 0, "depends_on": null},
     {"text": "What technologies are used by John Smith's projects?", "intent": "database", "priority": 1, "depends_on": 0}
+  ]
+}
+```
+
+Query: "Show a line chart of page creation over time"
+```json
+{
+  "sub_queries": [
+    {"text": "Create a line chart showing the number of pages created over time by date", "intent": "chart", "priority": 0, "depends_on": null}
+  ]
+}
+```
+
+Query: "What is ALFA and show a chart of its page activity?"
+```json
+{
+  "sub_queries": [
+    {"text": "Describe the ALFA project, its purpose, and key details", "intent": "rag", "priority": 0, "depends_on": null},
+    {"text": "Create a chart showing page creation activity for the ALFA project over time", "intent": "chart", "priority": 1, "depends_on": null}
+  ]
+}
+```
+
+Query: "Show a table of all projects and their technologies"
+```json
+{
+  "sub_queries": [
+    {"text": "Create a table showing all projects with their associated technologies", "intent": "table", "priority": 0, "depends_on": null}
+  ]
+}
+```
+
+Query: "List projects using Python in a table and also show a chart of page counts"
+```json
+{
+  "sub_queries": [
+    {"text": "Create a table of projects that use Python with their details", "intent": "table", "priority": 0, "depends_on": null},
+    {"text": "Create a chart showing the page count for each Python project", "intent": "chart", "priority": 1, "depends_on": 0}
   ]
 }
 ```
@@ -295,6 +347,8 @@ class LLMQueryAnalyzer:
                 "rag": SubQueryIntent.RAG,
                 "database": SubQueryIntent.DATABASE,
                 "hybrid": SubQueryIntent.HYBRID,
+                "chart": SubQueryIntent.CHART,
+                "table": SubQueryIntent.TABLE,
             }
             intent = intent_map.get(intent_str, SubQueryIntent.RAG)
 
@@ -336,11 +390,26 @@ class LLMQueryAnalyzer:
         # Simple heuristic fallback
         query_lower = query.lower()
 
+        # Check for chart indicators first (most specific)
+        chart_indicators = ["chart", "graph", "plot", "visualize", "visualization", "bar chart", "line chart", "pie chart"]
+        is_chart = any(ind in query_lower for ind in chart_indicators)
+
+        # Check for table indicators
+        table_indicators = ["table", "tabular", "in a table", "as a table", "table format", "table showing", "table of"]
+        is_table = any(ind in query_lower for ind in table_indicators)
+
         # Check for database indicators
         db_indicators = ["how many", "count", "list all", "list the", "show all", "who created"]
         is_database = any(ind in query_lower for ind in db_indicators)
 
-        intent = SubQueryIntent.DATABASE if is_database else SubQueryIntent.RAG
+        if is_chart:
+            intent = SubQueryIntent.CHART
+        elif is_table:
+            intent = SubQueryIntent.TABLE
+        elif is_database:
+            intent = SubQueryIntent.DATABASE
+        else:
+            intent = SubQueryIntent.RAG
 
         return QueryAnalysisResult(
             original_query=query,

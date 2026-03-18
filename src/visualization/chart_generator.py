@@ -190,8 +190,15 @@ Data:
 {data_str}
 ```
 
+IMPORTANT - Pre-loaded modules (DO NOT import these):
+- px (plotly.express)
+- go (plotly.graph_objects)
+- pd (pandas)
+- np (numpy)
+- json
+
 Requirements:
-1. Use Plotly Express (import plotly.express as px) or Plotly Graph Objects (import plotly.graph_objects as go)
+1. DO NOT include import statements - modules are already loaded as px, go, pd, np
 2. The data is provided in a variable called `data`
 3. Create a clear, professional visualization with:
    - Appropriate title
@@ -208,13 +215,16 @@ Common patterns:
 - For proportions: pie charts
 - For correlations: scatter plots
 
-Generate only executable Python code. No markdown, no explanations.
-Start with the imports and end with `fig` as the last line.
+Generate only executable Python code. No markdown, no explanations, no imports.
+End with `fig` as the last line.
 
 Code:"""
 
     def _clean_code(self, code: str) -> str:
         """Clean generated code.
+
+        Removes markdown blocks and import statements since the executor
+        pre-loads required modules (px, go, pd, np, json) in the context.
 
         Args:
             code: Raw generated code
@@ -233,7 +243,20 @@ Code:"""
         if code.endswith("```"):
             code = code[:-3]
 
-        return code.strip()
+        code = code.strip()
+
+        # Remove import statements - executor pre-loads px, go, pd, np, json
+        # This is necessary because the sandboxed executor doesn't allow __import__
+        lines = code.split("\n")
+        cleaned_lines = []
+        for line in lines:
+            stripped = line.strip()
+            # Skip import statements
+            if stripped.startswith("import ") or stripped.startswith("from "):
+                continue
+            cleaned_lines.append(line)
+
+        return "\n".join(cleaned_lines).strip()
 
     def generate_quick_chart(
         self,

@@ -825,7 +825,7 @@ Your synthesized answer:"""
             rag_agent=rag_agent,
             db_agent=db_agent,
             iliad_client=self.iliad_client,
-            max_items_to_describe=10,
+            max_items_to_describe=5,
         )
 
         # Execute iterative query

@@ -106,7 +106,7 @@ class IterativeDescribeAgent(BaseAgent):
         rag_agent: "RAGAgent",
         db_agent: "DatabaseAgent",
         iliad_client: Optional["IliadClient"] = None,
-        max_items_to_describe: int = 10,
+        max_items_to_describe: int = 5,
     ) -> None:
         """Initialize iterative describe agent.
 
@@ -174,10 +174,10 @@ class IterativeDescribeAgent(BaseAgent):
                     reasoning=f"Database query failed: {db_result.reasoning}",
                 )
 
-            # Extract items from database result
-            items = self._extract_items(db_result.data)
+            # Extract items with full metadata for ranking
+            all_items = self._extract_items_with_metadata(db_result.data)
 
-            if not items:
+            if not all_items:
                 return AgentResult(
                     status=AgentStatus.SUCCESS,
                     data={
@@ -188,17 +188,19 @@ class IterativeDescribeAgent(BaseAgent):
                     reasoning="Database query returned no results",
                 )
 
-            logger.info(f"Found {len(items)} items to describe")
+            logger.info(f"Found {len(all_items)} items total")
 
-            # Limit items to prevent runaway
-            items_to_describe = items[: self.max_items_to_describe]
-            if len(items) > self.max_items_to_describe:
-                logger.warning(
-                    f"Limiting to {self.max_items_to_describe} items "
-                    f"(found {len(items)})"
+            # Rank items by importance metrics and select top N
+            ranked_items = self._rank_items(all_items)
+            items_to_describe = ranked_items[: self.max_items_to_describe]
+
+            if len(all_items) > self.max_items_to_describe:
+                logger.info(
+                    f"Selected top {self.max_items_to_describe} items by importance "
+                    f"(from {len(all_items)} total)"
                 )
 
-            # Step 3: Describe each item
+            # Step 3: Describe each selected item
             descriptions = []
             sources = []
 
@@ -229,37 +231,41 @@ class IterativeDescribeAgent(BaseAgent):
 
             # Step 4: Synthesize final answer
             final_answer = self._synthesize_answer(
-                query, items, descriptions, context
+                query, all_items, descriptions, context
             )
 
             # Record execution
             context.record_execution(self.name, query)
 
             # Calculate success metrics
-            items_found = len(items)
+            total_items_found = len(all_items)
+            items_selected = len(items_to_describe)
             items_described = sum(1 for d in descriptions if d.get("found", False))
 
             logger.info(
-                f"IterativeDescribeAgent completed: {items_found} items, "
-                f"{items_described} described successfully"
+                f"IterativeDescribeAgent completed: {total_items_found} found, "
+                f"{items_selected} selected, {items_described} described successfully"
             )
 
             return AgentResult(
                 status=AgentStatus.SUCCESS,
                 data={
                     "answer": final_answer,
-                    "items": items,
+                    "all_items": [self._get_item_name(i) for i in all_items],
+                    "items_selected": [self._get_item_name(i) for i in items_to_describe],
                     "descriptions": descriptions,
                     "sources": sources,
-                    "items_found": items_found,
+                    "items_found": total_items_found,
+                    "items_selected_count": items_selected,
                     "items_described": items_described,
                 },
-                confidence=items_described / max(items_found, 1),
-                reasoning=f"Found {items_found} items, described {items_described}",
+                confidence=items_described / max(items_selected, 1),
+                reasoning=f"Found {total_items_found} items, selected top {items_selected}, described {items_described}",
                 metadata={
                     "list_query": list_query,
                     "describe_template": describe_template,
-                    "truncated": len(items) > self.max_items_to_describe,
+                    "selection_limited": total_items_found > self.max_items_to_describe,
+                    "ranking_applied": total_items_found > self.max_items_to_describe,
                 },
             )
 
@@ -311,13 +317,17 @@ class IterativeDescribeAgent(BaseAgent):
     def _parse_query(self, query: str) -> Tuple[Optional[str], str]:
         """Parse query to extract list query and describe template.
 
+        Preserves original case in the list_query to ensure proper matching
+        (e.g., 'XGBoost' stays as 'XGBoost', not 'xgboost').
+
         Args:
             query: Original query
 
         Returns:
             Tuple of (list_query, describe_template)
         """
-        query_lower = query.lower()
+        # Use IGNORECASE for pattern matching but extract from original query
+        # to preserve case (e.g., 'XGBoost' not 'xgboost')
 
         # Try to split on common conjunctions
         split_patterns = [
@@ -326,10 +336,10 @@ class IterativeDescribeAgent(BaseAgent):
         ]
 
         for pattern in split_patterns:
-            match = re.search(pattern, query_lower)
+            match = re.search(pattern, query, re.IGNORECASE)
             if match:
                 list_part = match.group(1).strip()
-                # Clean up list part
+                # Clean up list part - preserve original case
                 list_query = list_part
 
                 # Build describe template
@@ -339,26 +349,28 @@ class IterativeDescribeAgent(BaseAgent):
         # Fallback: look for "describe all X that use Y" pattern
         match = re.search(
             r"describe\s+all\s+(\w+)\s+that\s+(.+)",
-            query_lower
+            query,
+            re.IGNORECASE
         )
         if match:
             entity = match.group(1)  # e.g., "projects"
-            condition = match.group(2)  # e.g., "use XGBoost"
+            condition = match.group(2)  # e.g., "use XGBoost" - preserves case
             list_query = f"List all {entity} that {condition}"
             describe_template = f"Describe {{item}} in detail."
             return list_query, describe_template
 
-        # Another fallback: split on "and describe"
-        if " and describe" in query_lower:
-            parts = query_lower.split(" and describe", 1)
-            list_query = parts[0].strip()
+        # Another fallback: split on "and describe" (case-insensitive)
+        and_describe_match = re.search(r"\s+and\s+describe", query, re.IGNORECASE)
+        if and_describe_match:
+            list_query = query[:and_describe_match.start()].strip()
             describe_template = "Describe {item} in detail, including its purpose and key features."
             return list_query, describe_template
 
         # Try to extract list query from the beginning
         list_match = re.search(
             r"^(list\s+(?:all\s+)?[^,]+)",
-            query_lower
+            query,
+            re.IGNORECASE
         )
         if list_match:
             list_query = list_match.group(1)
@@ -367,14 +379,17 @@ class IterativeDescribeAgent(BaseAgent):
 
         return None, ""
 
-    def _extract_items(self, db_data: Any) -> List[str]:
-        """Extract item names from database result.
+    def _extract_items_with_metadata(self, db_data: Any) -> List[Dict[str, Any]]:
+        """Extract items with full metadata from database result.
+
+        Preserves metadata fields like page_size, children_count, depth
+        for ranking purposes.
 
         Args:
             db_data: Database result data
 
         Returns:
-            List of item names
+            List of item dicts with metadata
         """
         if db_data is None:
             return []
@@ -385,25 +400,63 @@ class IterativeDescribeAgent(BaseAgent):
             items = []
             for item in answer:
                 if isinstance(item, dict):
-                    # Look for common name fields
-                    for key in ["title", "name", "project", "page", "item"]:
-                        if key in item:
-                            items.append(str(item[key]))
-                            break
-                    else:
-                        # Use first value
-                        if item:
-                            items.append(str(list(item.values())[0]))
+                    # Keep full dict with metadata
+                    items.append(item)
                 else:
-                    items.append(str(item))
+                    # Wrap simple values
+                    items.append({"name": str(item)})
             return items
 
         if isinstance(answer, str):
             # Try to parse as newline-separated list
             lines = [l.strip().lstrip("- •").strip() for l in answer.split("\n")]
-            return [l for l in lines if l and not l.startswith("#")]
+            return [{"name": l} for l in lines if l and not l.startswith("#")]
 
         return []
+
+    def _rank_items(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Rank items by importance metrics.
+
+        Ranks by (in order of priority):
+        1. page_size / content_length - larger content = more to describe
+        2. children_count - more children = more comprehensive project
+        3. depth - shallower = more top-level/important
+
+        Args:
+            items: List of item dicts with metadata
+
+        Returns:
+            Items sorted by importance (most important first)
+        """
+        def get_score(item: Dict[str, Any]) -> float:
+            score = 0.0
+
+            # Page size / content length (normalize, higher = better)
+            page_size = item.get("page_size", item.get("content_length", 0))
+            if isinstance(page_size, (int, float)):
+                score += min(page_size / 10000, 10)  # Cap at 10 points
+
+            # Children count (more children = more comprehensive)
+            children = item.get("children_count", item.get("num_children", 0))
+            if isinstance(children, (int, float)):
+                score += min(children, 10)  # Cap at 10 points
+
+            # Depth (shallower = more important, invert so lower depth = higher score)
+            depth = item.get("depth", item.get("page_depth", 5))
+            if isinstance(depth, (int, float)):
+                score += max(0, 5 - depth)  # Depth 0-1 = 4-5 points, depth 5+ = 0
+
+            return score
+
+        # Sort by score descending (highest score = most important)
+        ranked = sorted(items, key=get_score, reverse=True)
+
+        if ranked:
+            logger.debug(
+                f"Ranked {len(ranked)} items. Top item score: {get_score(ranked[0]):.1f}"
+            )
+
+        return ranked
 
     def _get_item_name(self, item: Any) -> str:
         """Get display name for an item.
@@ -445,7 +498,13 @@ class IterativeDescribeAgent(BaseAgent):
             return self._llm_synthesize(original_query, items, descriptions)
 
         # Otherwise, format manually
-        parts = [f"Found {len(items)} items:\n"]
+        total_found = len(items)
+        num_described = len(descriptions)
+
+        if total_found > num_described:
+            parts = [f"Found {total_found} items. Describing the top {num_described} by importance:\n"]
+        else:
+            parts = [f"Found {total_found} items:\n"]
 
         for i, desc in enumerate(descriptions, 1):
             item_name = desc.get("item", f"Item {i}")
@@ -454,9 +513,11 @@ class IterativeDescribeAgent(BaseAgent):
             parts.append(f"\n## {i}. {item_name}\n")
             parts.append(description)
 
-        if len(items) > len(descriptions):
+        if total_found > num_described:
+            remaining = total_found - num_described
             parts.append(
-                f"\n\n*Note: Showing descriptions for {len(descriptions)} of {len(items)} items.*"
+                f"\n\n*Note: {remaining} additional items were found but not described. "
+                f"Items were selected based on content size, depth, and comprehensiveness.*"
             )
 
         return "\n".join(parts)
@@ -482,19 +543,26 @@ class IterativeDescribeAgent(BaseAgent):
             for d in descriptions
         )
 
+        total_found = len(items)
+        num_described = len(descriptions)
+
+        selection_note = ""
+        if total_found > num_described:
+            selection_note = f" (selected top {num_described} by importance from {total_found} total)"
+
         prompt = f"""Synthesize these project descriptions into a comprehensive answer.
 
 Original Question: {original_query}
 
-Found {len(items)} items. Here are the descriptions:
+Found {total_found} items{selection_note}. Here are the descriptions:
 
 {desc_text}
 
 Create a well-organized response that:
-1. Summarizes all the projects/items found
-2. Highlights key similarities and differences
-3. Provides the essential information about each one
-4. Is clear and easy to read
+1. Provides a clear summary of each project described
+2. Gives the essential information about each one
+3. Is well-structured and easy to read
+4. Mentions if there are additional items not described
 
 Your synthesized answer:"""
 
@@ -536,20 +604,21 @@ Your synthesized answer:"""
         if not result.success or not result.data:
             return False, "Result was not successful"
 
-        items_found = result.data.get("items_found", 0)
+        # Use items_selected_count (items we attempted to describe) for coverage
+        items_selected = result.data.get("items_selected_count", result.data.get("items_found", 0))
         items_described = result.data.get("items_described", 0)
 
-        if items_found == 0:
+        if items_selected == 0:
             return True, "No items to describe"
 
-        coverage = items_described / items_found
+        coverage = items_described / items_selected
 
         if coverage < min_coverage:
-            missing = items_found - items_described
+            missing = items_selected - items_described
             return (
                 False,
-                f"Low coverage: {items_described}/{items_found} items described "
+                f"Low coverage: {items_described}/{items_selected} selected items described "
                 f"({coverage:.1%}), {missing} items missing descriptions"
             )
 
-        return True, f"Good coverage: {items_described}/{items_found} ({coverage:.1%})"
+        return True, f"Good coverage: {items_described}/{items_selected} ({coverage:.1%})"

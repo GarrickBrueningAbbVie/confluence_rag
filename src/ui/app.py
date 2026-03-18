@@ -221,6 +221,11 @@ def load_custom_css() -> None:
         color: white;
     }}
 
+    .intent-table {{
+        background-color: #FF6B35;
+        color: white;
+    }}
+
     /* Chart container */
     .chart-container {{
         background-color: #1E1E1E;
@@ -427,6 +432,8 @@ def get_intent_badge(intent: str) -> str:
         "database": "intent-database",
         "hybrid": "intent-hybrid",
         "chart": "intent-chart",
+        "table": "intent-table",
+        "smart": "intent-hybrid",  # Smart routing uses hybrid color
     }
 
     css_class = badge_classes.get(intent, "intent-rag")
@@ -658,7 +665,27 @@ def display_chart(result: Dict[str, Any]) -> None:
     if not ADVANCED_FEATURES_AVAILABLE:
         return
 
-    # Get chart data from metadata or from the answer itself
+    # Check for pre-generated figures from smart routing (CHART intent results)
+    figures = result.get("figures", [])
+    if figures:
+        st.markdown("### Visualization")
+        for i, fig_data in enumerate(figures):
+            figure = fig_data.get("figure")
+            if figure:
+                # Display chart type info
+                chart_type = fig_data.get("chart_type", "chart")
+                query_text = fig_data.get("query", "")
+                if query_text:
+                    st.caption(f"*{chart_type.title()} chart: {query_text[:100]}*")
+
+                # Use native Streamlit Plotly support for better rendering
+                st.plotly_chart(figure, use_container_width=True)
+            elif fig_data.get("html"):
+                # Fallback to HTML rendering if figure object not available
+                st.components.v1.html(fig_data["html"], height=500)
+        return
+
+    # Fallback: Get chart data from metadata or from the answer itself
     chart_data = result.get("metadata", {}).get("chart_data")
     requires_viz = result.get("metadata", {}).get("requires_visualization", False)
 
@@ -698,6 +725,49 @@ def display_chart(result: Dict[str, Any]) -> None:
 
     except Exception as e:
         logger.warning(f"Failed to generate chart: {e}")
+
+
+def display_tables(result: Dict[str, Any]) -> None:
+    """Display tables from smart routing TABLE intent results."""
+    tables = result.get("tables", [])
+    if not tables:
+        return
+
+    for i, table_data in enumerate(tables):
+        query_text = table_data.get("query", "")
+        row_count = table_data.get("row_count", 0)
+
+        if query_text:
+            st.markdown(f"### Table: {query_text[:80]}")
+        else:
+            st.markdown("### Table Results")
+
+        # Display row count
+        if row_count:
+            st.caption(f"*{row_count} rows*")
+
+        # Try to display as Streamlit dataframe (better interactivity)
+        raw_data = table_data.get("raw_data")
+        if raw_data:
+            import pandas as pd
+            try:
+                if isinstance(raw_data, list) and len(raw_data) > 0 and isinstance(raw_data[0], dict):
+                    df = pd.DataFrame(raw_data)
+                    st.dataframe(df, use_container_width=True)
+                    continue
+                elif isinstance(raw_data, dict):
+                    df = pd.DataFrame(list(raw_data.items()), columns=["Key", "Value"])
+                    st.dataframe(df, use_container_width=True)
+                    continue
+            except Exception as e:
+                logger.debug(f"Could not convert to dataframe: {e}")
+
+        # Fallback to markdown table
+        markdown = table_data.get("markdown", "")
+        if markdown:
+            st.markdown(markdown)
+        elif table_data.get("html"):
+            st.markdown(table_data["html"], unsafe_allow_html=True)
 
 
 def display_routing_info(result: Dict[str, Any]) -> None:
@@ -1094,6 +1164,9 @@ def main() -> None:
 
                         # Display chart if applicable
                         display_chart(result)
+
+                        # Display tables if applicable
+                        display_tables(result)
 
                     else:
                         # Use RAG pipeline directly

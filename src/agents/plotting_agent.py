@@ -72,12 +72,20 @@ class PlottingAgent(BaseAgent):
 
     # Chart type keywords
     CHART_TYPE_KEYWORDS: Dict[str, str] = {
+        "bar chart": "bar",
+        "bar graph": "bar",
         "bar": "bar",
         "column": "bar",
+        "pie chart": "pie",
         "pie": "pie",
         "donut": "pie",
+        "line chart": "line",
+        "line graph": "line",
         "line": "line",
         "trend": "line",
+        "time series": "line",
+        "over time": "line",
+        "timeline": "line",
         "scatter": "scatter",
         "histogram": "histogram",
         "distribution": "histogram",
@@ -86,6 +94,20 @@ class PlottingAgent(BaseAgent):
         "tree": "treemap",
         "treemap": "treemap",
     }
+
+    # Temporal indicators that suggest line chart
+    TEMPORAL_INDICATORS: List[str] = [
+        "when", "timeline", "created", "modified", "date",
+        "time", "history", "progression", "growth",
+        "monthly", "weekly", "daily", "yearly", "annual",
+    ]
+
+    # Comparison indicators that suggest bar chart
+    COMPARISON_INDICATORS: List[str] = [
+        "most", "top", "highest", "lowest", "ranking",
+        "compare", "comparison", "by user", "by author",
+        "per project", "per team", "by project", "by team",
+    ]
 
     def __init__(
         self,
@@ -321,9 +343,18 @@ class PlottingAgent(BaseAgent):
         """
         query_lower = query.lower()
 
+        # Check explicit chart type keywords first
         for keyword, chart_type in self.CHART_TYPE_KEYWORDS.items():
             if keyword in query_lower:
                 return chart_type
+
+        # Check temporal indicators (suggests line chart)
+        if any(ind in query_lower for ind in self.TEMPORAL_INDICATORS):
+            return "line"
+
+        # Check comparison indicators (suggests bar chart)
+        if any(ind in query_lower for ind in self.COMPARISON_INDICATORS):
+            return "bar"
 
         return self.default_chart_type
 
