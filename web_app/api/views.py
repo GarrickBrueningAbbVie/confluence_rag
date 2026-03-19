@@ -11,12 +11,15 @@ import threading
 from typing import Any, Dict
 
 from django.core.cache import cache
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from rest_framework import status
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from loguru import logger
 
 from core.services import get_pipeline_service
 
@@ -56,6 +59,7 @@ def get_query_result_key(query_id: str) -> str:
     return f"{QUERY_RESULT_PREFIX}{query_id}"
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class QueryAPIView(APIView):
     """API endpoint for executing RAG queries.
 
@@ -100,8 +104,14 @@ class QueryAPIView(APIView):
         Returns:
             Response: JSON response with query results or status.
         """
+        # Log the incoming request for debugging
+        logger.debug(f"API request data: {request.data}")
+        logger.debug(f"API request content type: {request.content_type}")
+
         # Validate query text
         query_text = request.data.get("query", "").strip()
+        logger.info(f"Query text received: '{query_text[:100] if query_text else 'EMPTY'}'")
+
         if not query_text:
             return Response(
                 {"error": "Query text is required"},

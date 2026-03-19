@@ -32,9 +32,7 @@
     </main>
     {% endblock %}
 
-    <!-- Custom JavaScript -->
-    {% block extra_js %}{% endblock %}
-
+    <!-- Base utilities - must load before extra_js -->
     <script>
         // CSRF token for AJAX requests
         function getCookie(name) {
@@ -68,5 +66,8 @@
             return fetch(url, mergedOptions);
         }
     </script>
+
+    <!-- Custom JavaScript from child templates -->
+    {% block extra_js %}{% endblock %}
 </body>
 </html>

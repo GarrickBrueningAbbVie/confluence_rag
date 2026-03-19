@@ -94,12 +94,13 @@
 <script src="{% static 'js/progress.js' %}"></script>
 <script src="{% static 'js/charts.js' %}"></script>
 <script>
-    const queryId = "{{ query_id }}";
-    const queryText = "{{ query_text|escapejs }}";
+    // Set as global variables for progress.js to access
+    window.queryId = "{{ query_id }}";
+    window.queryText = "{{ query_text|escapejs }}";
 
     // Initialize WebSocket connection for progress updates
     document.addEventListener('DOMContentLoaded', function() {
-        initProgressTracking(queryId);
+        initProgressTracking(window.queryId);
     });
 </script>
 {% endblock %}
