@@ -235,9 +235,25 @@ class PipelineService:
         try:
             from database.pipeline import DatabasePipeline
 
+            # Find JSON data path (same logic as Streamlit app)
+            json_path = Path(SRC_DIR.parent / "Data_Storage/confluence_pages_processed.json")
+            if not json_path.exists():
+                json_path = Path(SRC_DIR.parent / "Data_Storage/confluence_pages.json")
+
+            if not json_path.exists():
+                logger.warning("No JSON data found for database pipeline")
+                self.db_pipeline = None
+                return
+
+            if not self.iliad_client:
+                logger.warning("Iliad client not available for database pipeline")
+                self.db_pipeline = None
+                return
+
             self.db_pipeline = DatabasePipeline(
-                iliad_api_key=ConfigConfluenceRag.ILIAD_API_KEY,
-                iliad_api_url=ConfigConfluenceRag.ILIAD_API_URL,
+                json_path=str(json_path),
+                iliad_client=self.iliad_client,
+                model=ConfigConfluenceRag.ILIAD_DEFAULT_MODEL,
             )
             logger.debug("Database pipeline initialized")
         except Exception as e:
@@ -268,7 +284,15 @@ class PipelineService:
         try:
             from visualization.chart_generator import ChartGenerator
 
-            self.chart_generator = ChartGenerator()
+            if not self.iliad_client:
+                logger.warning("Iliad client not available for chart generator")
+                self.chart_generator = None
+                return
+
+            self.chart_generator = ChartGenerator(
+                iliad_client=self.iliad_client,
+                model=ConfigConfluenceRag.ILIAD_DEFAULT_MODEL,
+            )
             logger.debug("Chart generator initialized")
         except Exception as e:
             logger.warning(f"Failed to initialize chart generator: {e}")
@@ -350,7 +374,7 @@ class PipelineService:
         Returns:
             QueryResult from RAG pipeline.
         """
-        result = self.rag_pipeline.query(query, top_k=top_k)
+        result = self.rag_pipeline.query(query, n_results=top_k)
 
         return QueryResult(
             success=result.get("success", True),
@@ -389,13 +413,15 @@ class PipelineService:
 
         Args:
             query: The query text.
-            top_k: Number of documents to retrieve.
+            top_k: Number of documents to retrieve (used by internal pipelines).
             emit_progress: Progress callback function.
 
         Returns:
             QueryResult from appropriate pipeline.
         """
-        result = self.query_router.route(query, top_k=top_k)
+        # Note: query_router.route() doesn't take top_k parameter directly
+        # It uses the pipelines' default settings internally
+        result = self.query_router.route(query)
 
         intent = result.get("intent", "unknown")
         emit_progress(50, f"Executing {intent.upper()} pipeline...")
@@ -427,23 +453,32 @@ class PipelineService:
 
         Args:
             query: The query text.
-            top_k: Number of documents to retrieve.
+            top_k: Number of documents to retrieve (used by internal pipelines).
             emit_progress: Progress callback function.
 
         Returns:
             QueryResult from smart routing.
         """
         # Use route_multistep for complex queries
-        result = self.query_router.route_multistep(query, top_k=top_k)
+        # Note: route_multistep doesn't take top_k parameter directly
+        result = self.query_router.route_multistep(query)
 
         emit_progress(70, "Aggregating results...")
 
+        # SmartRouteResult has different attributes, convert to dict
+        result_dict = {
+            "success": getattr(result, "success", True),
+            "answer": getattr(result, "answer", ""),
+            "sources": getattr(result, "sources", []),
+            "metadata": getattr(result, "metadata", {}),
+        }
+
         return QueryResult(
-            success=result.get("success", True),
-            answer=result.get("answer", ""),
-            sources=result.get("sources", []),
+            success=result_dict.get("success", True),
+            answer=result_dict.get("answer", ""),
+            sources=result_dict.get("sources", []),
             intent="smart",
-            metadata=result.get("metadata", {}),
+            metadata=result_dict.get("metadata", {}),
         )
 
     def get_status(self) -> Dict[str, Any]:
