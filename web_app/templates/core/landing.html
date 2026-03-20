@@ -15,8 +15,7 @@
         <form class="search-form" action="{% url 'core:search' %}" method="post">
             {% csrf_token %}
             <div class="search-input-wrapper">
-                <input
-                    type="text"
+                <textarea
                     name="query"
                     class="search-input"
                     placeholder="Ask a question about DSA projects..."
@@ -24,7 +23,8 @@
                     autofocus
                     required
                     id="search-input"
-                >
+                    rows="1"
+                ></textarea>
                 <button type="submit" class="search-button">
                     Search
                 </button>
@@ -48,20 +48,39 @@
 
 {% block extra_js %}
 <script>
+    const searchInput = document.getElementById('search-input');
+
+    // Auto-resize textarea based on content
+    function autoResize() {
+        searchInput.style.height = 'auto';
+        const maxHeight = 200;
+        const newHeight = Math.min(searchInput.scrollHeight, maxHeight);
+        searchInput.style.height = newHeight + 'px';
+        // Enable scrolling only when content exceeds max height
+        searchInput.style.overflowY = searchInput.scrollHeight > maxHeight ? 'auto' : 'hidden';
+    }
+
+    searchInput.addEventListener('input', autoResize);
+
     // Click on example query to populate search box
     document.querySelectorAll('#example-list li').forEach(function(item) {
         item.addEventListener('click', function() {
             const query = this.getAttribute('data-query');
-            document.getElementById('search-input').value = query;
-            document.getElementById('search-input').focus();
+            searchInput.value = query;
+            searchInput.focus();
+            autoResize();
         });
     });
 
-    // Handle Enter key for search
-    document.getElementById('search-input').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter' && this.value.trim()) {
+    // Handle Enter key for search (Enter submits, Shift+Enter adds newline)
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey && this.value.trim()) {
+            e.preventDefault();
             this.closest('form').submit();
         }
     });
+
+    // Initial resize in case there's pre-filled content
+    autoResize();
 </script>
 {% endblock %}

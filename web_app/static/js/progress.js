@@ -212,6 +212,8 @@ function displaySubQueryProgress(subQueries) {
  * @param {Object} result - The query result data.
  */
 function displayResults(result) {
+    console.log('displayResults called with:', result);
+
     // Hide loading state
     const loadingState = document.getElementById('loading-state');
     if (loadingState) {
@@ -234,14 +236,33 @@ function displayResults(result) {
         displayAnswer(result.answer, result.answer_type);
     }
 
-    // Display chart if present
+    // Display chart if present - check multiple possible locations
+    let chartDisplayed = false;
+
+    // Check figures array
     if (result.figures && result.figures.length > 0 && typeof displayChart === 'function') {
+        console.log('Displaying chart from figures array:', result.figures[0]);
         displayChart(result.figures[0]);
-    } else if (result.metadata && result.metadata.has_figures && typeof displayChart === 'function') {
-        // Try to extract chart from metadata
+        chartDisplayed = true;
+    }
+
+    // Check metadata for figure
+    if (!chartDisplayed && result.metadata && typeof displayChart === 'function') {
         if (result.metadata.figure) {
+            console.log('Displaying chart from metadata.figure');
             displayChart({ figure: result.metadata.figure });
+            chartDisplayed = true;
+        } else if (result.metadata.has_figures && result.metadata.chart_data) {
+            console.log('Displaying chart from metadata.chart_data');
+            displayChart(result.metadata.chart_data);
+            chartDisplayed = true;
         }
+    }
+
+    // Check for tables in answer
+    if (result.tables && result.tables.length > 0 && typeof displayTable === 'function') {
+        console.log('Displaying table from tables array:', result.tables[0]);
+        displayTable(result.tables[0]);
     }
 
     // Display sources

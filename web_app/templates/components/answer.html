@@ -23,23 +23,40 @@
 
 <script>
     function displayAnswer(answer, answerType) {
+        console.log('displayAnswer called with:', { answer, answerType, type: typeof answer });
+
         const answerSection = document.getElementById('answer-section');
         const answerContent = document.getElementById('answer-content');
         const tableContainer = document.getElementById('table-container');
+
+        if (!answerSection || !answerContent) {
+            console.error('Answer section or content element not found');
+            return;
+        }
 
         answerSection.style.display = 'block';
 
         // Check if answer is tabular data
         if (answerType === 'table' || (Array.isArray(answer) && answer.length > 0 && typeof answer[0] === 'object')) {
+            console.log('Displaying as table');
             displayTable(answer);
-            tableContainer.style.display = 'block';
+            if (tableContainer) {
+                tableContainer.style.display = 'block';
+            }
             answerContent.innerHTML = '<p class="text-muted">See the table below for detailed results.</p>';
         } else if (typeof answer === 'object' && !Array.isArray(answer)) {
             // JSON object - display as formatted JSON or convert to table
+            console.log('Displaying as JSON');
             displayJsonAnswer(answer);
         } else {
             // Regular text answer - render as Markdown
-            answerContent.innerHTML = marked.parse(String(answer));
+            console.log('Displaying as Markdown');
+            try {
+                answerContent.innerHTML = marked.parse(String(answer));
+            } catch (e) {
+                console.error('Error parsing markdown:', e);
+                answerContent.textContent = String(answer);
+            }
         }
     }
 
@@ -126,5 +143,22 @@
 
     .table-responsive {
         overflow-x: auto;
+        margin-top: var(--spacing-md);
+        border-radius: var(--radius-md);
+    }
+
+    #table-container .card {
+        margin-top: var(--spacing-lg);
+    }
+
+    /* Ensure table cells have proper text styling */
+    .results-table td {
+        vertical-align: top;
+        word-wrap: break-word;
+        max-width: 300px;
+    }
+
+    .results-table td:first-child {
+        font-weight: 500;
     }
 </style>

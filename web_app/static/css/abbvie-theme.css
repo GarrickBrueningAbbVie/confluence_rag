@@ -133,7 +133,7 @@ a:hover {
 /* Search Box Styles */
 .search-container {
     width: 100%;
-    max-width: 600px;
+    max-width: 700px;
     margin-bottom: var(--spacing-xl);
 }
 
@@ -144,37 +144,51 @@ a:hover {
 }
 
 .search-input-wrapper {
-    position: relative;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    background-color: var(--bg-secondary);
+    border: 2px solid var(--abbvie-medium-blue);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-sm);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    overflow: hidden;
+}
+
+.search-input-wrapper:focus-within {
+    border-color: var(--abbvie-purple);
+    box-shadow: 0 0 0 3px rgba(138, 46, 204, 0.3);
 }
 
 .search-input {
-    width: 100%;
-    padding: var(--spacing-md) var(--spacing-lg);
-    padding-right: 60px;
+    flex: 1;
+    min-height: 44px;
+    max-height: 200px;
+    padding: var(--spacing-sm) var(--spacing-md);
     font-size: 1.125rem;
     font-family: var(--font-primary);
-    border: 2px solid var(--abbvie-medium-blue);
-    border-radius: var(--radius-full);
-    background-color: var(--bg-secondary);
+    border: none;
+    background-color: transparent;
     color: var(--abbvie-white);
     outline: none;
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    resize: none;
+    overflow: hidden;
+    line-height: 1.5;
+    /* Hide scrollbar when JS enables overflow-y: auto for long content */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.search-input::-webkit-scrollbar {
+    display: none;
 }
 
 .search-input::placeholder {
     color: var(--abbvie-medium-gray);
 }
 
-.search-input:focus {
-    border-color: var(--abbvie-purple);
-    box-shadow: 0 0 0 3px rgba(138, 46, 204, 0.3);
-}
-
 .search-button {
-    position: absolute;
-    right: 8px;
+    flex-shrink: 0;
     padding: var(--spacing-sm) var(--spacing-lg);
     font-size: 1rem;
     font-weight: 600;
@@ -182,9 +196,11 @@ a:hover {
     color: var(--abbvie-white);
     background-color: var(--abbvie-purple);
     border: none;
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: background-color var(--transition-fast), transform var(--transition-fast);
+    align-self: flex-end;
+    min-height: 44px;
 }
 
 .search-button:hover {
@@ -498,17 +514,29 @@ a:hover {
 /* Tables */
 .results-table {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     background-color: var(--bg-secondary);
     border-radius: var(--radius-md);
     overflow: hidden;
+    border: 1px solid var(--abbvie-dark-gray);
 }
 
 .results-table th,
 .results-table td {
     padding: var(--spacing-md);
     text-align: left;
-    border-bottom: 1px solid var(--bg-tertiary);
+    border-bottom: 1px solid var(--abbvie-dark-gray);
+    border-right: 1px solid var(--abbvie-dark-gray);
+}
+
+.results-table th:last-child,
+.results-table td:last-child {
+    border-right: none;
+}
+
+.results-table tbody tr:last-child td {
+    border-bottom: none;
 }
 
 .results-table th {
@@ -517,10 +545,16 @@ a:hover {
     text-transform: uppercase;
     font-size: 0.75rem;
     letter-spacing: 0.05em;
+    color: var(--abbvie-white);
+    border-bottom: 2px solid var(--abbvie-purple);
+}
+
+.results-table tbody tr:nth-child(even) {
+    background-color: var(--bg-tertiary);
 }
 
 .results-table tbody tr:hover {
-    background-color: var(--bg-tertiary);
+    background-color: rgba(138, 46, 204, 0.15);
 }
 
 /* Chart Container */
@@ -529,6 +563,12 @@ a:hover {
     border-radius: var(--radius-md);
     padding: var(--spacing-lg);
     margin-bottom: var(--spacing-lg);
+    min-height: 400px;
+}
+
+.chart-container #plotly-chart {
+    min-height: 350px;
+    width: 100%;
 }
 
 .chart-caption {
@@ -536,6 +576,15 @@ a:hover {
     font-size: 0.875rem;
     color: var(--abbvie-medium-blue);
     margin-top: var(--spacing-md);
+}
+
+/* Ensure Plotly charts are visible */
+.js-plotly-plot {
+    min-height: 350px !important;
+}
+
+.js-plotly-plot .plot-container {
+    min-height: 350px !important;
 }
 
 /* Loading States */
@@ -609,15 +658,20 @@ a:hover {
         font-size: 2rem;
     }
 
+    .search-input-wrapper {
+        flex-direction: column;
+    }
+
     .search-input {
         font-size: 1rem;
-        padding: var(--spacing-md);
-        padding-right: 50px;
+        width: 100%;
     }
 
     .search-button {
         padding: var(--spacing-sm) var(--spacing-md);
         font-size: 0.875rem;
+        width: 100%;
+        align-self: stretch;
     }
 
     .debug-grid {

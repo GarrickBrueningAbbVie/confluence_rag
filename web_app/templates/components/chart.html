@@ -12,10 +12,17 @@
 
 <script>
     function displayChart(chartData) {
+        console.log('displayChart called with:', chartData);
+
         const chartSection = document.getElementById('chart-section');
         const chartContainer = document.getElementById('plotly-chart');
         const chartTypeBadge = document.getElementById('chart-type-badge');
         const chartCaption = document.getElementById('chart-caption');
+
+        if (!chartSection || !chartContainer) {
+            console.error('Chart section or container not found');
+            return;
+        }
 
         chartSection.style.display = 'block';
 
@@ -24,30 +31,52 @@
             // Parse the figure if it's a string
             let figureData = chartData.figure;
             if (typeof figureData === 'string') {
-                figureData = JSON.parse(figureData);
+                try {
+                    figureData = JSON.parse(figureData);
+                } catch (e) {
+                    console.error('Error parsing figure JSON:', e);
+                    return;
+                }
             }
+
+            console.log('Figure data:', figureData);
+
+            // Ensure we have data and layout
+            const data = figureData.data || [];
+            const baseLayout = figureData.layout || {};
 
             // Apply dark theme to layout
             const darkLayout = {
                 paper_bgcolor: '#1E1E1E',
                 plot_bgcolor: '#1E1E1E',
-                font: { color: '#FFFFFF' },
+                font: { color: '#FFFFFF', family: 'Roboto, Arial, sans-serif' },
                 xaxis: {
                     gridcolor: '#333',
                     zerolinecolor: '#333',
+                    linecolor: '#333',
+                    ...baseLayout.xaxis
                 },
                 yaxis: {
                     gridcolor: '#333',
                     zerolinecolor: '#333',
+                    linecolor: '#333',
+                    ...baseLayout.yaxis
                 },
-                ...figureData.layout
+                margin: { l: 60, r: 30, t: 50, b: 60 },
+                ...baseLayout
             };
 
-            Plotly.newPlot(chartContainer, figureData.data, darkLayout, {
-                responsive: true,
-                displayModeBar: true,
-                modeBarButtonsToRemove: ['lasso2d', 'select2d'],
-            });
+            try {
+                Plotly.newPlot(chartContainer, data, darkLayout, {
+                    responsive: true,
+                    displayModeBar: true,
+                    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+                    displaylogo: false,
+                });
+                console.log('Plotly chart rendered successfully');
+            } catch (e) {
+                console.error('Error rendering Plotly chart:', e);
+            }
 
             // Update chart type badge
             if (chartData.chart_type) {
@@ -61,7 +90,10 @@
             }
         } else if (chartData.html) {
             // Fallback to HTML rendering
+            console.log('Rendering chart from HTML');
             chartContainer.innerHTML = chartData.html;
+        } else {
+            console.warn('No figure or html data in chartData');
         }
     }
 
