@@ -4,6 +4,10 @@ Intent classification for query routing.
 This module classifies user queries to determine which pipeline(s)
 should handle them: RAG (semantic), Database (structured), or both.
 
+Note: This is the RULE-BASED classifier, used as a FALLBACK when
+LLM-based classification (UnifiedQueryAnalyzer) is unavailable.
+For smart routing, prefer UnifiedQueryAnalyzer instead.
+
 Example:
     >>> from routing.intent_classifier import IntentClassifier
     >>> classifier = IntentClassifier()
@@ -12,25 +16,24 @@ Example:
 """
 
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from loguru import logger
+
+# Import from shared modules
+from .types import QueryIntent
+from .patterns import (
+    DATABASE_INDICATORS,
+    RAG_INDICATORS,
+    CHART_INDICATORS,
+    HYBRID_INDICATORS,
+)
 
 # Import types for type hints
 try:
     from iliad.client import IliadClient
 except ImportError:
     pass
-
-
-class QueryIntent(Enum):
-    """Classification of query intent."""
-
-    RAG = "rag"  # Semantic search (what is, explain, describe)
-    DATABASE = "database"  # Structured query (count, list, filter)
-    HYBRID = "hybrid"  # Both pipelines needed
-    CHART = "chart"  # Visualization request
 
 
 @dataclass
@@ -41,95 +44,6 @@ class ClassificationResult:
     confidence: float
     reasoning: str
     sub_queries: Optional[List[str]] = None  # For hybrid queries
-
-
-# Keywords and patterns for rule-based classification
-DATABASE_INDICATORS = [
-    # Count/aggregation
-    "how many",
-    "count",
-    "total number",
-    "sum of",
-    "average",
-    "mean",
-    # Listing
-    "list all",
-    "list the",
-    "show all",
-    "show me all",
-    "get all",
-    # Filtering
-    "filter",
-    "where",
-    "with score",
-    "above",
-    "below",
-    "greater than",
-    "less than",
-    "between",
-    # Grouping
-    "by project",
-    "by author",
-    "by technology",
-    "per project",
-    "per author",
-    "group by",
-    # Specific lookups
-    "who created",
-    "who has",
-    "which projects",
-    "which pages",
-    "what projects",
-]
-
-RAG_INDICATORS = [
-    # Explanatory
-    "what is",
-    "what are",
-    "explain",
-    "describe",
-    "tell me about",
-    "how does",
-    "how do",
-    "why",
-    # Information seeking
-    "documentation for",
-    "information about",
-    "details about",
-    "overview of",
-    # Understanding
-    "understand",
-    "meaning of",
-    "purpose of",
-    "definition of",
-]
-
-CHART_INDICATORS = [
-    "chart",
-    "graph",
-    "plot",
-    "visualize",
-    "visualization",
-    "bar chart",
-    "pie chart",
-    "line chart",
-    "histogram",
-    "show me a chart",
-    "create a graph",
-]
-
-HYBRID_INDICATORS = [
-    # Database-like + summary
-    "summarize",
-    "summary of",
-    "and explain",
-    "and describe",
-    "with details",
-    # Comparative
-    "compare",
-    "difference between",
-    "similar to",
-]
 
 
 class IntentClassifier:

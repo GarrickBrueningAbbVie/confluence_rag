@@ -17,7 +17,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from loguru import logger
 
-from .query_analyzer import SubQuery, SubQueryIntent
+from .types import QueryIntent, SubQuery
+from .formatters import format_db_answer
 
 # Import types for type hints
 try:
@@ -297,15 +298,15 @@ class ParallelQueryExecutor:
         logger.debug(f"Executing {sub_query.intent.value}: {sub_query.text[:50]}...")
 
         try:
-            if sub_query.intent == SubQueryIntent.RAG:
+            if sub_query.intent == QueryIntent.RAG:
                 result = self._execute_rag(sub_query)
-            elif sub_query.intent == SubQueryIntent.DATABASE:
+            elif sub_query.intent == QueryIntent.DATABASE:
                 result = self._execute_database(sub_query)
-            elif sub_query.intent == SubQueryIntent.HYBRID:
+            elif sub_query.intent == QueryIntent.HYBRID:
                 result = self._execute_hybrid(sub_query, previous_results)
-            elif sub_query.intent == SubQueryIntent.CHART:
+            elif sub_query.intent == QueryIntent.CHART:
                 result = self._execute_chart(sub_query, previous_results)
-            elif sub_query.intent == SubQueryIntent.TABLE:
+            elif sub_query.intent == QueryIntent.TABLE:
                 result = self._execute_table(sub_query, previous_results)
             else:
                 result = self._execute_rag(sub_query)  # Default fallback
@@ -420,7 +421,7 @@ class ParallelQueryExecutor:
             sources = rag_result.sources
 
         if db_result.success:
-            combined_answer += f"From data:\n{self._format_db_answer(db_result.answer)}"
+            combined_answer += f"From data:\n{format_db_answer(db_result.answer)}"
 
         return SubQueryResult(
             sub_query=sub_query,
@@ -969,53 +970,3 @@ class ParallelQueryExecutor:
             return len(data)
         return 1
 
-    def _format_db_answer(self, answer: Any) -> str:
-        """Format database answer for display.
-
-        Args:
-            answer: Raw database result
-
-        Returns:
-            Formatted string
-        """
-        if answer is None:
-            return "No results found."
-
-        if isinstance(answer, (int, float)):
-            return str(answer)
-
-        if isinstance(answer, str):
-            return answer
-
-        if isinstance(answer, list):
-            if len(answer) == 0:
-                return "No results found."
-
-            if len(answer) <= 10:
-                if isinstance(answer[0], dict):
-                    lines = []
-                    for item in answer:
-                        line = ", ".join(f"{k}: {v}" for k, v in item.items())
-                        lines.append(f"- {line}")
-                    return "\n".join(lines)
-                return "\n".join(f"- {item}" for item in answer)
-
-            # Truncate long lists
-            preview = answer[:10]
-            if isinstance(preview[0], dict):
-                lines = []
-                for item in preview:
-                    line = ", ".join(f"{k}: {v}" for k, v in item.items())
-                    lines.append(f"- {line}")
-                lines.append(f"... and {len(answer) - 10} more items")
-                return "\n".join(lines)
-
-            return (
-                "\n".join(f"- {item}" for item in preview)
-                + f"\n... and {len(answer) - 10} more items"
-            )
-
-        if isinstance(answer, dict):
-            return "\n".join(f"- {k}: {v}" for k, v in answer.items())
-
-        return str(answer)

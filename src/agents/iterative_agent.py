@@ -25,6 +25,10 @@ from loguru import logger
 
 from agents.base import BaseAgent, AgentContext, AgentResult, AgentStatus
 
+# Import shared patterns for list+describe detection
+from routing.patterns import LIST_DESCRIBE_PATTERNS as LIST_KEYWORDS_SHARED
+from routing.patterns import DESCRIBE_PATTERNS as DESCRIBE_KEYWORDS_SHARED
+
 # Type hints for optional imports
 try:
     from agents.rag_agent import RAGAgent
@@ -72,33 +76,19 @@ class IterativeDescribeAgent(BaseAgent):
         r"(?:describe|explain)\s+all\s+(.+?)\s+that\s+(?:use|have|contain)",
     ]
 
-    # Keywords indicating this pattern
-    DESCRIBE_KEYWORDS = [
-        "describe all",
-        "describe each",
-        "describe these",
-        "describe them",
-        "explain all",
-        "explain each",
-        "explain these",
-        "explain them",
+    # Use shared patterns from routing.patterns (imported at module level)
+    # Additional keywords specific to this agent's detection
+    DESCRIBE_KEYWORDS = DESCRIBE_KEYWORDS_SHARED + [
         "summarize all",
         "summarize each",
         "tell me about all",
         "tell me about each",
     ]
 
-    LIST_KEYWORDS = [
-        "list all",
-        "list the",
-        "what projects",
-        "which projects",
+    LIST_KEYWORDS = LIST_KEYWORDS_SHARED + [
         "what pages",
         "which pages",
-        "show all",
         "show me all",
-        "get all",
-        "find all",
     ]
 
     def __init__(
