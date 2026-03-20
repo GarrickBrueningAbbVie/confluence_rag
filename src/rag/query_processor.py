@@ -212,7 +212,7 @@ class QueryProcessor:
     def __init__(
         self,
         iliad_client: Optional[Any] = None,
-        model: str = "gpt-4o-mini-global",
+        model: str = "gpt-5-mini-global",
         use_llm: bool = True,
         use_few_shot: bool = True,
     ) -> None:

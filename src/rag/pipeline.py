@@ -811,7 +811,7 @@ Please provide a clear, accurate answer based on the context provided."""
                     "document_index": i,
                     "title": meta.get("title", "Unknown"),
                     "url": meta.get("url", ""),
-                    "type": meta.get("source_type", "Unknown"),
+                    "type": meta.get("source_type") or meta.get("space_name", "Confluence Page"),
                 }
             )
 

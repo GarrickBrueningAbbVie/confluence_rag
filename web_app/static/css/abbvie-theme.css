@@ -230,6 +230,7 @@ a:hover {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
+    align-items: center;
     gap: var(--spacing-sm);
     list-style: none;
     padding: 0;
@@ -237,6 +238,10 @@ a:hover {
 }
 
 .example-list li {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
     padding: var(--spacing-xs) var(--spacing-md);
     background-color: var(--bg-tertiary);
     border-radius: var(--radius-full);

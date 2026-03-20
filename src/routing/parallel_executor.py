@@ -496,12 +496,16 @@ class ParallelQueryExecutor:
             )
 
             if chart_result.get("success"):
+                # Convert Plotly figure to JSON for serialization
+                figure = chart_result.get("figure")
+                figure_json = figure.to_json() if figure else None
+
                 return SubQueryResult(
                     sub_query=sub_query,
                     success=True,
                     answer=f"Generated {chart_type} chart successfully",
                     metadata={
-                        "figure": chart_result.get("figure"),
+                        "figure": figure_json,
                         "html": chart_result.get("html"),
                         "code": chart_result.get("code"),
                         "chart_type": chart_type,

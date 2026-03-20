@@ -349,7 +349,7 @@ class UnifiedQueryAnalyzer:
     def __init__(
         self,
         iliad_client: "IliadClient",
-        model: str = "gpt-4o-mini-global",
+        model: str = "gpt-5-mini-global",
         max_sub_queries: int = 5,
     ) -> None:
         """Initialize the unified analyzer.
@@ -387,7 +387,8 @@ class UnifiedQueryAnalyzer:
 
         try:
             # Build prompt
-            prompt = UNIFIED_ANALYSIS_PROMPT.format(query=query)
+            logger.info(f"Building Prompt from query {query}")
+            prompt = UNIFIED_ANALYSIS_PROMPT.replace("{query}", query)
 
             # Single LLM call
             messages = [{"role": "user", "content": prompt}]
@@ -395,6 +396,7 @@ class UnifiedQueryAnalyzer:
             content = self.iliad_client.extract_content(response)
 
             # Parse response
+            logger.info('Parsing Response')
             result = self._parse_response(content, query)
 
             logger.info(

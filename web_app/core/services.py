@@ -326,33 +326,44 @@ class PipelineService:
 
         start_time = time.time()
 
-        def emit_progress(percent: int, step: str) -> None:
+        # Define pipeline stages with percentages
+        STAGES = {
+            "analyzing": {"percent": 10, "name": "Analyzing"},
+            "classifying": {"percent": 25, "name": "Classifying"},
+            "retrieving": {"percent": 45, "name": "Retrieving"},
+            "generating": {"percent": 70, "name": "Generating"},
+            "aggregating": {"percent": 85, "name": "Aggregating"},
+            "complete": {"percent": 100, "name": "Complete"},
+        }
+
+        def emit_progress(stage: str, description: str = "") -> None:
             if progress_callback:
-                progress_callback(percent, step)
+                stage_info = STAGES.get(stage, {"percent": 0, "name": stage})
+                progress_callback(stage_info["percent"], stage_info["name"])
 
         try:
-            emit_progress(10, "Analyzing query...")
+            emit_progress("analyzing")
 
             # Route based on mode
             if mode == "rag" or not self.query_router:
-                emit_progress(30, "Executing RAG pipeline...")
+                emit_progress("classifying")
+                emit_progress("retrieving")
                 result = self._execute_rag(query, top_k)
+                emit_progress("generating")
             elif mode == "database" and self.db_pipeline:
-                emit_progress(30, "Executing database query...")
+                emit_progress("classifying")
+                emit_progress("retrieving")
                 result = self._execute_database(query)
+                emit_progress("generating")
             elif mode == "smart" and self.query_router:
-                emit_progress(20, "Decomposing query...")
                 result = self._execute_smart(query, top_k, emit_progress)
             else:
                 # Auto mode with query router
-                emit_progress(20, "Classifying intent...")
                 result = self._execute_routed(query, top_k, emit_progress)
-
-            emit_progress(90, "Finalizing results...")
 
             result.execution_time = time.time() - start_time
 
-            emit_progress(100, "Complete")
+            emit_progress("complete")
 
             return result
 
@@ -407,31 +418,35 @@ class PipelineService:
         self,
         query: str,
         top_k: int,
-        emit_progress: Callable[[int, str], None],
+        emit_progress: Callable[[str, str], None],
     ) -> QueryResult:
         """Execute query through query router.
 
         Args:
             query: The query text.
             top_k: Number of documents to retrieve (used by internal pipelines).
-            emit_progress: Progress callback function.
+            emit_progress: Progress callback function (stage, description).
 
         Returns:
             QueryResult from appropriate pipeline.
         """
+        emit_progress("classifying")
+
         # Note: query_router.route() doesn't take top_k parameter directly
         # It uses the pipelines' default settings internally
+        emit_progress("retrieving")
         result = self.query_router.route(query)
 
-        intent = result.get("intent", "unknown")
-        emit_progress(50, f"Executing {intent.upper()} pipeline...")
+        emit_progress("generating")
 
-        # Extract figures if present
-        figures = []
-        if result.get("metadata", {}).get("has_figures"):
-            fig_data = result.get("metadata", {}).get("figure")
-            if fig_data:
-                figures.append({"figure": fig_data})
+        # Extract intent from result
+        intent = result.get("intent", "unknown")
+
+        # Extract figures directly from result (query_router puts them here)
+        figures = result.get("figures", [])
+
+        # Extract tables directly from result
+        tables = result.get("tables", [])
 
         return QueryResult(
             success=result.get("success", True),
@@ -441,29 +456,34 @@ class PipelineService:
             intent=intent,
             metadata=result.get("metadata", {}),
             figures=figures,
+            tables=tables,
         )
 
     def _execute_smart(
         self,
         query: str,
         top_k: int,
-        emit_progress: Callable[[int, str], None],
+        emit_progress: Callable[[str, str], None],
     ) -> QueryResult:
         """Execute query through smart router with decomposition.
 
         Args:
             query: The query text.
             top_k: Number of documents to retrieve (used by internal pipelines).
-            emit_progress: Progress callback function.
+            emit_progress: Progress callback function (stage, description).
 
         Returns:
             QueryResult from smart routing.
         """
+        emit_progress("classifying")
+        emit_progress("retrieving")
+
         # Use route_multistep for complex queries
         # Note: route_multistep doesn't take top_k parameter directly
         result = self.query_router.route_multistep(query)
 
-        emit_progress(70, "Aggregating results...")
+        emit_progress("generating")
+        emit_progress("aggregating")
 
         # SmartRouteResult has different attributes, convert to dict
         result_dict = {

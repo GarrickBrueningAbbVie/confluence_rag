@@ -17,6 +17,11 @@ let currentQueryId = null;
 function initProgressTracking(queryId) {
     currentQueryId = queryId;
 
+    // Show progress bar and reset stage indicators
+    if (typeof showProgress === 'function') {
+        showProgress();
+    }
+
     // Try WebSocket first, fall back to polling
     if (window.WebSocket) {
         initWebSocket(queryId);

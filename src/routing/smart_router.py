@@ -91,7 +91,7 @@ class SmartQueryRouter:
         rag_pipeline: "RAGPipeline",
         db_pipeline: Optional["DatabasePipeline"] = None,
         iliad_client: Optional["IliadClient"] = None,
-        analyzer_model: str = "gpt-4o-mini-global",
+        analyzer_model: str = "gpt-5-mini-global",
         synthesis_model: str = "gpt-4o-mini-global",
         max_workers: int = 4,
         query_timeout: float = 30.0,
