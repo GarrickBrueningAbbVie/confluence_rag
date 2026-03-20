@@ -17,6 +17,7 @@ from loguru import logger
 
 from .types import QueryIntent
 from .parallel_executor import SubQueryResult
+from .formatters import format_db_answer
 
 # Import types for type hints
 try:
@@ -202,31 +203,7 @@ class ResultAggregator:
         Returns:
             Formatted answer string
         """
-        answer = result.answer
-
-        if isinstance(answer, str):
-            return answer
-
-        if isinstance(answer, (int, float)):
-            return str(answer)
-
-        if isinstance(answer, list):
-            if not answer:
-                return "No results found."
-            if isinstance(answer[0], dict):
-                lines = []
-                for item in answer[:20]:
-                    line = ", ".join(f"{k}: {v}" for k, v in item.items())
-                    lines.append(f"- {line}")
-                if len(answer) > 20:
-                    lines.append(f"... and {len(answer) - 20} more")
-                return "\n".join(lines)
-            return "\n".join(f"- {item}" for item in answer[:20])
-
-        if isinstance(answer, dict):
-            return "\n".join(f"- {k}: {v}" for k, v in answer.items())
-
-        return str(answer)
+        return format_db_answer(result.answer, max_items=20)
 
     def _synthesize_with_llm(
         self,

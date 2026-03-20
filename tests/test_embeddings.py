@@ -60,28 +60,6 @@ def test_compute_similarity(embedding_manager: EmbeddingManager) -> None:
     assert -1 <= sim_13 <= 1
 
 
-def test_find_most_similar(embedding_manager: EmbeddingManager) -> None:
-    """Test finding most similar embeddings."""
-    texts = [
-        "Python programming language",
-        "Java programming language",
-        "Cooking recipes",
-        "Software development",
-    ]
-
-    embeddings = embedding_manager.generate_embeddings(texts, show_progress=False)
-    query = "Programming in Python"
-    query_embedding = embedding_manager.generate_embedding(query)
-
-    top_indices = embedding_manager.find_most_similar(
-        query_embedding, embeddings, top_k=2
-    )
-
-    assert len(top_indices) == 2
-    # First result should be Python-related (index 0)
-    assert top_indices[0] in [0, 1, 3]
-
-
 def test_empty_text_embedding(embedding_manager: EmbeddingManager) -> None:
     """Test handling of empty text."""
     embedding = embedding_manager.generate_embedding("")

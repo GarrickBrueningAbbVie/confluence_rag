@@ -20,6 +20,13 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from agents.base import BaseAgent, AgentContext, AgentResult, AgentStatus
+from routing.patterns import (
+    CHART_INDICATORS,
+    CHART_TYPE_KEYWORDS as _CHART_TYPE_KEYWORDS,
+    CHART_TYPE_IMPLICIT,
+    TEMPORAL_INDICATORS,
+    COMPARISON_CHART_INDICATORS,
+)
 
 # Type hints for optional imports
 try:
@@ -27,6 +34,17 @@ try:
     from iliad.client import IliadClient
 except ImportError:
     pass
+
+
+# Merge chart type keywords from patterns for agent use
+_MERGED_CHART_KEYWORDS: Dict[str, str] = {**_CHART_TYPE_KEYWORDS, **CHART_TYPE_IMPLICIT}
+# Add additional keywords specific to plotting agent
+_MERGED_CHART_KEYWORDS.update({
+    "heatmap": "heatmap",
+    "heat map": "heatmap",
+    "tree": "treemap",
+    "treemap": "treemap",
+})
 
 
 class PlottingAgent(BaseAgent):
@@ -52,62 +70,22 @@ class PlottingAgent(BaseAgent):
         ...     result.data["figure"].show()
     """
 
-    # Keywords indicating visualization is needed
-    VIZ_INDICATORS: List[str] = [
-        "chart",
-        "plot",
-        "graph",
-        "visualize",
-        "visualization",
+    # Use shared indicators from routing.patterns
+    VIZ_INDICATORS: List[str] = CHART_INDICATORS + [
         "show me",
         "display",
-        "bar chart",
-        "pie chart",
-        "line chart",
-        "histogram",
-        "scatter",
         "heatmap",
         "treemap",
     ]
 
-    # Chart type keywords
-    CHART_TYPE_KEYWORDS: Dict[str, str] = {
-        "bar chart": "bar",
-        "bar graph": "bar",
-        "bar": "bar",
-        "column": "bar",
-        "pie chart": "pie",
-        "pie": "pie",
-        "donut": "pie",
-        "line chart": "line",
-        "line graph": "line",
-        "line": "line",
-        "trend": "line",
-        "time series": "line",
-        "over time": "line",
-        "timeline": "line",
-        "scatter": "scatter",
-        "histogram": "histogram",
-        "distribution": "histogram",
-        "heatmap": "heatmap",
-        "heat map": "heatmap",
-        "tree": "treemap",
-        "treemap": "treemap",
-    }
+    # Use merged chart type keywords
+    CHART_TYPE_KEYWORDS: Dict[str, str] = _MERGED_CHART_KEYWORDS
 
-    # Temporal indicators that suggest line chart
-    TEMPORAL_INDICATORS: List[str] = [
-        "when", "timeline", "created", "modified", "date",
-        "time", "history", "progression", "growth",
-        "monthly", "weekly", "daily", "yearly", "annual",
-    ]
+    # Use shared temporal indicators
+    TEMPORAL_INDICATORS: List[str] = TEMPORAL_INDICATORS
 
-    # Comparison indicators that suggest bar chart
-    COMPARISON_INDICATORS: List[str] = [
-        "most", "top", "highest", "lowest", "ranking",
-        "compare", "comparison", "by user", "by author",
-        "per project", "per team", "by project", "by team",
-    ]
+    # Use shared comparison indicators
+    COMPARISON_INDICATORS: List[str] = COMPARISON_CHART_INDICATORS
 
     def __init__(
         self,

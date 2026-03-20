@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from loguru import logger
 
 from agents.base import BaseAgent, AgentContext, AgentResult, AgentStatus
+from routing.patterns import RAG_INDICATORS as ROUTING_RAG_INDICATORS
+from agents.query_utils import enhance_query_with_context
 
 # Type hints for optional imports
 try:
@@ -50,26 +52,6 @@ class RAGAgent(BaseAgent):
         >>> if result.success:
         ...     print(result.data["answer"])
     """
-
-    # Keywords indicating RAG is appropriate
-    RAG_INDICATORS: List[str] = [
-        "what is",
-        "explain",
-        "describe",
-        "how does",
-        "tell me about",
-        "overview",
-        "summary",
-        "purpose",
-        "architecture",
-        "design",
-        "why is",
-        "what are",
-        "definition",
-        "meaning",
-        "concept",
-        "understand",
-    ]
 
     def __init__(
         self,
@@ -208,7 +190,7 @@ class RAGAgent(BaseAgent):
         score = 0.3
 
         # Check for RAG indicators
-        for indicator in self.RAG_INDICATORS:
+        for indicator in ROUTING_RAG_INDICATORS:
             if indicator in query_lower:
                 score += 0.12
 
@@ -248,19 +230,12 @@ class RAGAgent(BaseAgent):
             ... )
             >>> # Returns: "Find similar to: ML project"
         """
-        enhanced = query
+        # Use shared utility for placeholder replacement
+        enhanced = enhance_query_with_context(
+            query, context.intermediate_results, max_value_length=500
+        )
 
-        # Replace template placeholders
-        for key, value in context.intermediate_results.items():
-            placeholder = "{" + key + "}"
-            if placeholder in enhanced:
-                # Truncate long values
-                value_str = str(value)
-                if len(value_str) > 500:
-                    value_str = value_str[:500] + "..."
-                enhanced = enhanced.replace(placeholder, value_str)
-
-        # If no explicit template but project_summary available, append as context
+        # RAG-specific: Auto-inject project_summary for similarity queries
         if (
             enhanced == query
             and "project_summary" in context.intermediate_results

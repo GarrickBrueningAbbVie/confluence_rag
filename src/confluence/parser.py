@@ -1,9 +1,14 @@
 """Parser for Confluence HTML content."""
 
 from typing import List, Dict, Any
-from bs4 import BeautifulSoup
-import markdown
 from loguru import logger
+
+from confluence.html_utils import (
+    html_to_text as _html_to_text,
+    extract_tables as _extract_tables,
+    extract_links as _extract_links,
+    extract_headings as _extract_headings,
+)
 
 
 class ConfluenceParser:
@@ -29,18 +34,7 @@ class ConfluenceParser:
             Clean text extracted from HTML.
         """
         try:
-            soup = BeautifulSoup(html_content, "html.parser")
-
-            # Remove script and style elements
-            for element in soup(["script", "style"]):
-                element.decompose()
-
-            # Get text and clean up whitespace
-            text = soup.get_text(separator=" ", strip=True)
-            text = " ".join(text.split())
-
-            return text
-
+            return _html_to_text(html_content)
         except Exception as e:
             logger.error(f"Error parsing HTML content: {str(e)}")
             return ""
@@ -56,21 +50,9 @@ class ConfluenceParser:
             List of tables, where each table is a list of rows (list of cells).
         """
         try:
-            soup = BeautifulSoup(html_content, "html.parser")
-            tables = []
-
-            for table in soup.find_all("table"):
-                table_data = []
-                for row in table.find_all("tr"):
-                    cells = [cell.get_text(strip=True) for cell in row.find_all(["td", "th"])]
-                    if cells:
-                        table_data.append(cells)
-                if table_data:
-                    tables.append(table_data)
-
+            tables = _extract_tables(html_content)
             logger.debug(f"Extracted {len(tables)} tables from content")
             return tables
-
         except Exception as e:
             logger.error(f"Error extracting tables: {str(e)}")
             return []
@@ -86,16 +68,9 @@ class ConfluenceParser:
             List of dictionaries with 'text' and 'url' keys for each link.
         """
         try:
-            soup = BeautifulSoup(html_content, "html.parser")
-            links = []
-
-            for link in soup.find_all("a", href=True):
-                link_data = {"text": link.get_text(strip=True), "url": link["href"]}
-                links.append(link_data)
-
+            links = _extract_links(html_content, unique_only=False)
             logger.debug(f"Extracted {len(links)} links from content")
             return links
-
         except Exception as e:
             logger.error(f"Error extracting links: {str(e)}")
             return []
@@ -111,16 +86,9 @@ class ConfluenceParser:
             List of dictionaries with 'level' and 'text' for each header.
         """
         try:
-            soup = BeautifulSoup(html_content, "html.parser")
-            headers = []
-
-            for i in range(1, 7):
-                for header in soup.find_all(f"h{i}"):
-                    headers.append({"level": i, "text": header.get_text(strip=True)})
-
+            headers = _extract_headings(html_content)
             logger.debug(f"Extracted {len(headers)} headers from content")
             return headers
-
         except Exception as e:
             logger.error(f"Error extracting headers: {str(e)}")
             return []

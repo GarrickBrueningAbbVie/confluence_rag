@@ -27,6 +27,7 @@ import numpy as np
 import pickle
 
 from loguru import logger
+from rag.similarity import batch_cosine_similarity
 
 # Import embedding manager for type hints
 try:
@@ -259,11 +260,8 @@ class ProjectVectorStore:
         logger.debug(f"Store embeddings shape: {self.embeddings.shape}")
         logger.debug(f"Total projects in store: {len(self.documents)}")
 
-        # Compute cosine similarity
-        query_norm = query_embedding / (np.linalg.norm(query_embedding) + 1e-10)
-        embedding_norms = np.linalg.norm(self.embeddings, axis=1, keepdims=True) + 1e-10
-        normalized_embeddings = self.embeddings / embedding_norms
-        similarities = np.dot(normalized_embeddings, query_norm)
+        # Compute cosine similarity using shared utility
+        similarities = batch_cosine_similarity(query_embedding, self.embeddings)
 
         # DEBUG: Check similarity distribution
         logger.info(

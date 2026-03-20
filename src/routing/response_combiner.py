@@ -14,6 +14,8 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
+from .formatters import format_db_answer
+
 # Import types for type hints
 try:
     from iliad.client import IliadClient
@@ -40,7 +42,7 @@ class ResponseCombiner:
     def __init__(
         self,
         iliad_client: Optional["IliadClient"] = None,
-        model: str = "gpt-5-mini-global",
+        model: str = "gpt-4o-mini-global",
     ) -> None:
         """Initialize response combiner.
 
@@ -121,33 +123,7 @@ class ResponseCombiner:
         Returns:
             Formatted answer string
         """
-        answer = db_result.get("answer", "")
-
-        if isinstance(answer, str):
-            return answer
-
-        if isinstance(answer, (int, float)):
-            return str(answer)
-
-        if isinstance(answer, list):
-            if len(answer) == 0:
-                return "No results found."
-
-            if isinstance(answer[0], dict):
-                lines = []
-                for item in answer[:20]:  # Limit to 20 items
-                    line = ", ".join(f"{k}: {v}" for k, v in item.items())
-                    lines.append(f"- {line}")
-                if len(answer) > 20:
-                    lines.append(f"... and {len(answer) - 20} more items")
-                return "\n".join(lines)
-
-            return "\n".join(f"- {item}" for item in answer[:20])
-
-        if isinstance(answer, dict):
-            return "\n".join(f"- {k}: {v}" for k, v in answer.items())
-
-        return str(answer)
+        return format_db_answer(db_result.get("answer", ""), max_items=20)
 
     def _combine_simple(
         self,
@@ -229,27 +205,3 @@ Answer:"""
         except Exception as e:
             logger.warning(f"LLM synthesis failed: {e}, falling back to simple")
             return self._combine_simple(rag_result, db_result)
-
-    def format_sources(self, sources: list) -> str:
-        """Format source list for display.
-
-        Args:
-            sources: List of source documents
-
-        Returns:
-            Formatted sources string
-        """
-        if not sources:
-            return ""
-
-        lines = ["\n\nSources:"]
-        for i, source in enumerate(sources[:5], 1):
-            title = source.get("title", "Unknown")
-            url = source.get("url", "")
-
-            if url:
-                lines.append(f"{i}. [{title}]({url})")
-            else:
-                lines.append(f"{i}. {title}")
-
-        return "\n".join(lines)

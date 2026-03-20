@@ -73,12 +73,10 @@ class ClassificationResult:
         intent: The classified query intent
         confidence: Confidence score (0.0 to 1.0)
         reasoning: Explanation for the classification
+        sub_queries: Optional list of sub-query strings for hybrid queries
     """
 
     intent: QueryIntent
     confidence: float
     reasoning: str
-
-
-# Type aliases for backward compatibility
-SubQueryIntent = QueryIntent  # Deprecated: use QueryIntent instead
+    sub_queries: Optional[List[str]] = None

@@ -18,7 +18,6 @@ Example:
     >>> text = recognizer.recognize_file("/path/to/document.pdf")
 """
 
-import mimetypes
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 

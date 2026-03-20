@@ -12,7 +12,6 @@ Example:
 """
 
 import base64
-import mimetypes
 import os
 import time
 from dataclasses import dataclass, field
