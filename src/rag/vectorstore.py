@@ -6,6 +6,7 @@ import pickle
 import os
 from loguru import logger
 from rag.embeddings import EmbeddingManager
+from rag.similarity import batch_cosine_similarity
 
 
 class VectorStore:
@@ -188,7 +189,7 @@ class VectorStore:
             query_embedding = self.embedding_manager.generate_embedding(query_text)
 
             # Calculate cosine similarities
-            similarities = self._cosine_similarity(query_embedding, self.embeddings)
+            similarities = batch_cosine_similarity(query_embedding, self.embeddings)
 
             # DEBUG: Check similarity distribution
             logger.info(
@@ -211,37 +212,13 @@ class VectorStore:
                 "ids": [self.ids[i] for i in top_indices],
             }
 
-            logger.info(f"Found {len(result['documents'])} matching documents")
+            top_titles = [m.get('title', 'Unknown')[:50] for m in result['metadatas'][:3]]
+            logger.info(f"Found {len(result['documents'])} matching documents, top results: {top_titles}")
             return result
 
         except Exception as e:
             logger.error(f"Error querying vector store: {str(e)}")
             raise
-
-    def _cosine_similarity(
-        self, query_embedding: np.ndarray, embeddings: np.ndarray
-    ) -> np.ndarray:
-        """
-        Calculate cosine similarity between query and all embeddings.
-
-        Args:
-            query_embedding: Query embedding vector.
-            embeddings: Array of document embeddings.
-
-        Returns:
-            Array of similarity scores.
-        """
-        # Normalize query
-        query_norm = query_embedding / (np.linalg.norm(query_embedding) + 1e-10)
-
-        # Normalize embeddings
-        embedding_norms = np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-10
-        normalized_embeddings = embeddings / embedding_norms
-
-        # Calculate dot product (cosine similarity for normalized vectors)
-        similarities = np.dot(normalized_embeddings, query_norm)
-
-        return similarities
 
     def query_with_multi_filter(
         self,
@@ -293,7 +270,7 @@ class VectorStore:
             query_embedding = self.embedding_manager.generate_embedding(query_text)
 
             # Calculate cosine similarities
-            similarities = self._cosine_similarity(query_embedding, self.embeddings)
+            similarities = batch_cosine_similarity(query_embedding, self.embeddings)
 
             # DEBUG: Check similarity distribution before filtering
             logger.info(
@@ -353,7 +330,8 @@ class VectorStore:
                 "ids": [self.ids[i] for i in valid_indices],
             }
 
-            logger.info(f"Found {len(result['documents'])} documents after multi-filtering")
+            top_titles = [m.get('title', 'Unknown')[:50] for m in result['metadatas'][:3]]
+            logger.info(f"Found {len(result['documents'])} documents after multi-filtering, top results: {top_titles}")
             return result
 
         except Exception as e:
@@ -395,7 +373,7 @@ class VectorStore:
             query_embedding = self.embedding_manager.generate_embedding(query_text)
 
             # Calculate cosine similarities
-            similarities = self._cosine_similarity(query_embedding, self.embeddings)
+            similarities = batch_cosine_similarity(query_embedding, self.embeddings)
 
             # DEBUG: Check similarity distribution before filtering
             logger.info(
@@ -414,9 +392,14 @@ class VectorStore:
                 matching_count = mask.sum()
                 logger.info(f"Filter matched {matching_count}/{len(self.documents)} documents")
 
-                # DEBUG: Show what projects are in the store
-                unique_projects = set(meta.get(filter_field, "") for meta in self.metadatas)
-                logger.debug(f"Unique {filter_field} values in store: {list(unique_projects)[:10]}...")
+                # Show what values are in the store when no matches found
+                if matching_count == 0:
+                    unique_values = set(meta.get(filter_field, "") for meta in self.metadatas)
+                    sample_values = sorted(list(unique_values))[:10]
+                    logger.warning(
+                        f"No matches for {filter_field}={filter_values}. "
+                        f"Sample values in store: {sample_values}"
+                    )
 
                 # Set similarity to -inf for non-matching documents
                 filtered_similarities = np.where(mask, similarities, -np.inf)
@@ -440,7 +423,8 @@ class VectorStore:
                 "ids": [self.ids[i] for i in valid_indices],
             }
 
-            logger.info(f"Found {len(result['documents'])} matching documents after filtering")
+            top_titles = [m.get('title', 'Unknown')[:50] for m in result['metadatas'][:3]]
+            logger.info(f"Found {len(result['documents'])} matching documents after filtering, top results: {top_titles}")
             return result
 
         except Exception as e:
@@ -624,17 +608,14 @@ class VectorStore:
         query_embeddings = self.embedding_manager.generate_embeddings(project_names)
         project_embeddings = self.embedding_manager.generate_embeddings(unique_projects)
 
-        # Calculate similarities
+        # Calculate similarities using batch operation
         matched_projects = set()
         for i, query_name in enumerate(project_names):
-            query_emb = query_embeddings[i]
-            query_norm = query_emb / (np.linalg.norm(query_emb) + 1e-10)
+            # Use batch_cosine_similarity for vectorized computation
+            similarities = batch_cosine_similarity(query_embeddings[i], project_embeddings)
 
             for j, proj_name in enumerate(unique_projects):
-                proj_emb = project_embeddings[j]
-                proj_norm = proj_emb / (np.linalg.norm(proj_emb) + 1e-10)
-                similarity = float(np.dot(query_norm, proj_norm))
-
+                similarity = float(similarities[j])
                 if similarity >= similarity_threshold:
                     matched_projects.add(proj_name)
                     logger.debug(
@@ -699,11 +680,11 @@ class VectorStore:
 
         title_embeddings = self.embedding_manager.generate_embeddings(titles)
 
-        # Calculate all similarities at once for efficiency
+        # Calculate all similarities using batch operations
         all_matches = []
         for i, term in enumerate(search_terms):
-            term_emb = term_embeddings[i]
-            term_norm = term_emb / (np.linalg.norm(term_emb) + 1e-10)
+            # Use batch_cosine_similarity for vectorized computation
+            similarities = batch_cosine_similarity(term_embeddings[i], title_embeddings)
 
             for j, title in enumerate(titles):
                 page_id = page_ids_by_title[title]
@@ -713,9 +694,7 @@ class VectorStore:
                 if page['depth'] > max_depth:
                     continue
 
-                title_emb = title_embeddings[j]
-                title_norm = title_emb / (np.linalg.norm(title_emb) + 1e-10)
-                similarity = float(np.dot(term_norm, title_norm))
+                similarity = float(similarities[j])
 
                 if similarity >= similarity_threshold:
                     all_matches.append({
@@ -748,7 +727,8 @@ class VectorStore:
                 depth_counts[d] = depth_counts.get(d, 0) + 1
             logger.info(f"Title matches by depth: {depth_counts}")
 
-        logger.info(f"Total title matches found: {len(unique_matches)}")
+        matched_titles = [m['title'] for m in unique_matches]
+        logger.info(f"Total title matches found: {len(unique_matches)} - {matched_titles}")
         return unique_matches
 
     def get_descendant_page_ids(self, parent_page_id: str) -> List[str]:
@@ -766,14 +746,18 @@ class VectorStore:
         if len(self.documents) == 0:
             return [parent_page_id]
 
-        # Build a mapping of page_id -> children_ids
+        # Build mappings of page_id -> children_ids and page_id -> title
         page_children = {}
+        page_titles = {}
         for meta in self.metadatas:
             page_id = meta.get('page_id', '')
-            if page_id and page_id not in page_children:
-                children_str = meta.get('children_ids', '')
-                children_ids = [c.strip() for c in children_str.split(',') if c.strip()]
-                page_children[page_id] = children_ids
+            if page_id:
+                if page_id not in page_children:
+                    children_str = meta.get('children_ids', '')
+                    children_ids = [c.strip() for c in children_str.split(',') if c.strip()]
+                    page_children[page_id] = children_ids
+                if page_id not in page_titles:
+                    page_titles[page_id] = meta.get('title', 'Unknown')
 
         # BFS to find all descendants
         descendants = set([parent_page_id])
@@ -787,7 +771,8 @@ class VectorStore:
                     descendants.add(child_id)
                     queue.append(child_id)
 
-        logger.info(f"Found {len(descendants)} descendants for page {parent_page_id}")
+        parent_title = page_titles.get(parent_page_id, 'Unknown')
+        logger.info(f"Found {len(descendants)} descendants for page '{parent_title}' (ID: {parent_page_id})")
         return list(descendants)
 
     def query_with_page_ids(
@@ -816,14 +801,15 @@ class VectorStore:
                 "ids": [],
             }
 
-        logger.info(f"Querying with {len(page_ids)} page IDs filter")
+        query_preview = query_text[:80] + "..." if len(query_text) > 80 else query_text
+        logger.info(f"Querying '{query_preview}' with {len(page_ids)} page IDs filter")
 
         try:
             # Generate embedding for query
             query_embedding = self.embedding_manager.generate_embedding(query_text)
 
             # Calculate cosine similarities
-            similarities = self._cosine_similarity(query_embedding, self.embeddings)
+            similarities = batch_cosine_similarity(query_embedding, self.embeddings)
 
             # Create mask for matching page IDs
             page_ids_set = set(str(pid) for pid in page_ids)
@@ -855,7 +841,8 @@ class VectorStore:
                 "ids": [self.ids[i] for i in valid_indices],
             }
 
-            logger.info(f"Found {len(result['documents'])} documents after page ID filtering")
+            top_titles = [m.get('title', 'Unknown')[:50] for m in result['metadatas'][:3]]
+            logger.info(f"Found {len(result['documents'])} documents after page ID filtering, top results: {top_titles}")
             return result
 
         except Exception as e:

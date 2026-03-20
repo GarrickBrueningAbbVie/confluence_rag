@@ -121,46 +121,6 @@ def format_dict_result(data: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def format_single_answer(answer: Any, max_list_items: int = 20) -> str:
-    """Format a single result answer for aggregation.
-
-    Similar to format_db_answer but with higher default limits
-    for aggregation contexts.
-
-    Args:
-        answer: Result answer (can be various types)
-        max_list_items: Maximum list items to show
-
-    Returns:
-        Formatted string
-    """
-    if isinstance(answer, str):
-        return answer
-
-    if isinstance(answer, (int, float)):
-        return str(answer)
-
-    if isinstance(answer, list):
-        if not answer:
-            return "No results found."
-
-        if isinstance(answer[0], dict):
-            lines = []
-            for item in answer[:max_list_items]:
-                line = ", ".join(f"{k}: {v}" for k, v in item.items())
-                lines.append(f"- {line}")
-            if len(answer) > max_list_items:
-                lines.append(f"... and {len(answer) - max_list_items} more")
-            return "\n".join(lines)
-
-        return "\n".join(f"- {item}" for item in answer[:max_list_items])
-
-    if isinstance(answer, dict):
-        return "\n".join(f"- {k}: {v}" for k, v in answer.items())
-
-    return str(answer)
-
-
 def format_sources(sources: List[Dict[str, Any]], max_sources: int = 5) -> str:
     """Format source citations for display.
 

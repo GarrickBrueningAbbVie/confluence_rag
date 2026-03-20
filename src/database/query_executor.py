@@ -10,10 +10,13 @@ Example:
     >>> result = executor.execute("df['created_by'].value_counts().head(5)")
 """
 
+import re
+
 import pandas as pd
 from typing import Any, Dict, Optional
 
 from loguru import logger
+from database.security import validate_query_security, must_reference_dataframe
 
 
 class QueryExecutor:
@@ -173,31 +176,12 @@ class QueryExecutor:
         """
         issues = []
 
-        # Check for dangerous patterns
-        dangerous_patterns = [
-            ("import ", "Import statements not allowed"),
-            ("__", "Dunder methods not allowed"),
-            ("exec(", "exec() not allowed"),
-            ("eval(", "Nested eval() not allowed"),
-            ("open(", "File operations not allowed"),
-            ("os.", "OS module not allowed"),
-            ("sys.", "sys module not allowed"),
-            ("subprocess", "subprocess not allowed"),
-            ("globals(", "globals() not allowed"),
-            ("locals(", "locals() not allowed"),
-            ("compile(", "compile() not allowed"),
-            ("getattr(", "getattr() not allowed"),
-            ("setattr(", "setattr() not allowed"),
-            ("delattr(", "delattr() not allowed"),
-        ]
+        # Use shared security validation
+        security_result = validate_query_security(query)
+        issues.extend(security_result["issues"])
 
-        for pattern, message in dangerous_patterns:
-            if pattern in query:
-                issues.append(message)
-
+        # Additional executor-specific checks
         # Check for variable assignments (eval can't handle statements)
-        # Look for '=' that's not part of '==', '!=', '<=', '>=', '='
-        import re
         # Match '=' not preceded by <, >, !, = and not followed by =
         if re.search(r'(?<![<>=!])=(?!=)', query):
             # Could be assignment - check if it's at the start of a "word = " pattern
@@ -209,7 +193,7 @@ class QueryExecutor:
             issues.append("Multi-statement queries not allowed (use single expression)")
 
         # Check query references df
-        if "df" not in query:
+        if not must_reference_dataframe(query, "df"):
             issues.append("Query must reference 'df'")
 
         # Check query length

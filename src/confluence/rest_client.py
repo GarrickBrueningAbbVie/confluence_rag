@@ -5,7 +5,6 @@ This module uses the Confluence REST API to fetch all accessible pages
 from a Confluence space.
 """
 
-import os
 import requests
 import json
 import urllib3
@@ -15,6 +14,8 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from loguru import logger
+
+from confluence.html_utils import html_to_text
 
 # Disable SSL warnings when verification is disabled
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -139,23 +140,7 @@ class ConfluenceRestClient:
         Returns:
             Plain text with HTML tags removed
         """
-        if not html:
-            return ""
-
-        # Parse HTML
-        soup = BeautifulSoup(html, 'html.parser')
-
-        # Remove script and style elements
-        for script in soup(["script", "style"]):
-            script.decompose()
-
-        # Get text and clean up whitespace
-        text = soup.get_text(separator=' ')
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = ' '.join(chunk for chunk in chunks if chunk)
-
-        return text
+        return html_to_text(html)
 
     def _extract_external_links(self, html: str) -> List[str]:
         """

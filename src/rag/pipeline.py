@@ -248,8 +248,9 @@ class RAGPipeline:
             descendants = self.vector_store.get_descendant_page_ids(page_id)
             all_page_ids.update(descendants)
 
+        matched_titles = [m['title'] for m in title_matches]
         logger.info(
-            f"Title matching found {len(title_matches)} pages, "
+            f"Title matching found {len(title_matches)} pages: {matched_titles}, "
             f"expanding to {len(all_page_ids)} total pages (including children)"
         )
 

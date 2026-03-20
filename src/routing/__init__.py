@@ -46,7 +46,6 @@ from .patterns import (
 # Formatters
 from .formatters import (
     format_db_answer,
-    format_single_answer,
     format_list_result,
     format_sources,
 )
@@ -80,7 +79,6 @@ __all__ = [
     "classify_intent_fallback",
     # Formatters
     "format_db_answer",
-    "format_single_answer",
     "format_list_result",
     "format_sources",
     # Routers

@@ -20,6 +20,9 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from agents.base import BaseAgent, AgentContext, AgentResult, AgentStatus
+from routing.formatters import format_db_answer
+from routing.patterns import DATABASE_INDICATORS
+from agents.query_utils import enhance_query_with_context
 
 # Type hints for optional imports
 try:
@@ -49,34 +52,6 @@ class DatabaseAgent(BaseAgent):
         ...     for project in result.data["answer"]:
         ...         print(project)
     """
-
-    # Keywords indicating database query is appropriate
-    DB_INDICATORS: List[str] = [
-        "how many",
-        "count",
-        "list all",
-        "list the",
-        "show all",
-        "show me",
-        "who created",
-        "who works",
-        "filter",
-        "average",
-        "total",
-        "most common",
-        "least common",
-        "maximum",
-        "minimum",
-        "sum",
-        "group by",
-        "sort by",
-        "top",
-        "bottom",
-        "all projects",
-        "all pages",
-        "references",
-        "mentions",
-    ]
 
     def __init__(
         self,
@@ -202,7 +177,7 @@ class DatabaseAgent(BaseAgent):
         score = 0.2
 
         # Check for database indicators
-        for indicator in self.DB_INDICATORS:
+        for indicator in DATABASE_INDICATORS:
             if indicator in query_lower:
                 score += 0.15
 
@@ -238,20 +213,9 @@ class DatabaseAgent(BaseAgent):
         Returns:
             Enhanced query with placeholders filled
         """
-        enhanced = query
-
-        # Replace template placeholders
-        for key, value in context.intermediate_results.items():
-            placeholder = "{" + key + "}"
-            if placeholder in enhanced:
-                # Convert lists to comma-separated strings for queries
-                if isinstance(value, list):
-                    value_str = ", ".join(str(v) for v in value[:20])
-                else:
-                    value_str = str(value)
-                enhanced = enhanced.replace(placeholder, value_str)
-
-        return enhanced
+        return enhance_query_with_context(
+            query, context.intermediate_results, list_limit=20
+        )
 
     def _format_answer(self, answer: Any) -> str:
         """Format answer as human-readable string.
@@ -262,47 +226,7 @@ class DatabaseAgent(BaseAgent):
         Returns:
             Formatted string representation
         """
-        if answer is None:
-            return "No results found."
-
-        if isinstance(answer, (int, float)):
-            return str(answer)
-
-        if isinstance(answer, str):
-            return answer
-
-        if isinstance(answer, list):
-            if len(answer) == 0:
-                return "No results found."
-
-            if len(answer) <= 10:
-                if isinstance(answer[0], dict):
-                    lines = []
-                    for item in answer:
-                        line = ", ".join(f"{k}: {v}" for k, v in item.items())
-                        lines.append(f"- {line}")
-                    return "\n".join(lines)
-                return "\n".join(f"- {item}" for item in answer)
-
-            # Truncate long lists
-            preview = answer[:10]
-            if isinstance(preview[0], dict):
-                lines = []
-                for item in preview:
-                    line = ", ".join(f"{k}: {v}" for k, v in item.items())
-                    lines.append(f"- {line}")
-                lines.append(f"... and {len(answer) - 10} more items")
-                return "\n".join(lines)
-
-            return (
-                "\n".join(f"- {item}" for item in preview)
-                + f"\n... and {len(answer) - 10} more items"
-            )
-
-        if isinstance(answer, dict):
-            return "\n".join(f"- {k}: {v}" for k, v in answer.items())
-
-        return str(answer)
+        return format_db_answer(answer, max_items=10)
 
     def _count_results(self, answer: Any) -> int:
         """Count number of results.
@@ -320,95 +244,3 @@ class DatabaseAgent(BaseAgent):
         if isinstance(answer, (int, float)):
             return 1
         return 1
-
-
-class DatabaseStatsAgent(BaseAgent):
-    """Agent for retrieving database statistics.
-
-    Provides schema information, sample questions, and statistics
-    about the underlying data. Useful for meta-queries.
-
-    Attributes:
-        db_pipeline: Configured DatabasePipeline instance
-    """
-
-    def __init__(
-        self,
-        db_pipeline: "DatabasePipeline",
-    ) -> None:
-        """Initialize Database stats agent.
-
-        Args:
-            db_pipeline: Configured DatabasePipeline instance
-        """
-        super().__init__(
-            name="database_stats_agent",
-            description="Provides schema info and statistics about the data",
-        )
-        self.db_pipeline = db_pipeline
-
-    def execute(
-        self,
-        query: str,
-        context: AgentContext,
-    ) -> AgentResult:
-        """Get database statistics.
-
-        Args:
-            query: The query to process
-            context: Shared execution context
-
-        Returns:
-            AgentResult with statistics
-        """
-        logger.info(f"DatabaseStatsAgent executing: {query[:80]}...")
-
-        try:
-            stats = self.db_pipeline.get_stats()
-            sample_questions = self.db_pipeline.get_sample_questions()
-
-            context.record_execution(self.name, query)
-
-            return AgentResult(
-                status=AgentStatus.SUCCESS,
-                data={
-                    "stats": stats,
-                    "sample_questions": sample_questions,
-                },
-                confidence=1.0,
-                reasoning="Retrieved database statistics",
-            )
-
-        except Exception as e:
-            logger.error(f"DatabaseStatsAgent failed: {e}")
-            return AgentResult(
-                status=AgentStatus.FAILED,
-                reasoning=str(e),
-            )
-
-    def can_handle(self, query: str, context: AgentContext) -> float:
-        """Check if query is asking for stats/schema info.
-
-        Args:
-            query: The query to evaluate
-            context: Execution context
-
-        Returns:
-            Confidence score (0.0 - 1.0)
-        """
-        query_lower = query.lower()
-        stats_indicators = [
-            "schema",
-            "columns",
-            "fields",
-            "what data",
-            "what can i ask",
-            "sample questions",
-            "statistics",
-        ]
-
-        for indicator in stats_indicators:
-            if indicator in query_lower:
-                return 0.9
-
-        return 0.1

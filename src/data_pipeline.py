@@ -336,7 +336,7 @@ def vectorize_data(input_path: str = None) -> None:
         # Create document with metadata
         documents.append(content)
         metadatas.append({
-            "id": page_id,
+            "page_id": page_id,
             "title": title,
             "url": page.get("url", ""),
             "space_key": page.get("space_key", ""),
@@ -344,6 +344,7 @@ def vectorize_data(input_path: str = None) -> None:
             "main_project": page.get("main_project", ""),
             "main_project_id": page.get("main_project_id", ""),
             "depth": page.get("depth", 0),
+            "children_ids": ",".join(c.get("id", "") for c in page.get("children", [])),
             "type": "confluence_page",
         })
         ids.append(f"conf_{page_id}")

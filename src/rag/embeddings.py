@@ -5,6 +5,8 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 from loguru import logger
 
+from rag.similarity import cosine_similarity
+
 
 class EmbeddingManager:
     """
@@ -89,42 +91,7 @@ class EmbeddingManager:
         Returns:
             Cosine similarity score between -1 and 1.
         """
-        norm1 = np.linalg.norm(embedding1)
-        norm2 = np.linalg.norm(embedding2)
-
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-
-        similarity = np.dot(embedding1, embedding2) / (norm1 * norm2)
-        return float(similarity)
-
-    def find_most_similar(
-        self, query_embedding: np.ndarray, embeddings: np.ndarray, top_k: int = 5
-    ) -> List[int]:
-        """
-        Find indices of most similar embeddings to a query.
-
-        Args:
-            query_embedding: Query embedding vector.
-            embeddings: Array of embeddings to search through.
-            top_k: Number of top results to return. Defaults to 5.
-
-        Returns:
-            List of indices of the top_k most similar embeddings.
-        """
-        if len(embeddings) == 0:
-            return []
-
-        similarities = []
-        for i, emb in enumerate(embeddings):
-            sim = self.compute_similarity(query_embedding, emb)
-            similarities.append((i, sim))
-
-        similarities.sort(key=lambda x: x[1], reverse=True)
-        top_indices = [idx for idx, _ in similarities[:top_k]]
-
-        logger.debug(f"Found top {len(top_indices)} most similar embeddings")
-        return top_indices
+        return cosine_similarity(embedding1, embedding2)
 
     def get_model_info(self) -> dict:
         """

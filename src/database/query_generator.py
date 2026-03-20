@@ -13,9 +13,11 @@ Example:
     >>> query = generator.generate("How many pages use Python?")
 """
 
+import re
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+from database.security import is_safe_query, validate_query_security
 
 # Import types for type hints
 try:
@@ -267,8 +269,6 @@ Output ONLY the pandas expression (starting with df or pd). No variable names, n
         Returns:
             Extracted query string or None
         """
-        import re
-
         # Clean up response
         query = response.strip()
 
@@ -308,24 +308,10 @@ Output ONLY the pandas expression (starting with df or pd). No variable names, n
         if "df" not in query:
             return None
 
-        # Check for dangerous operations
-        dangerous_patterns = [
-            "import ",
-            "exec(",
-            "eval(",
-            "open(",
-            "__",
-            "os.",
-            "sys.",
-            "subprocess",
-            "shutil",
-            "pathlib",
-        ]
-
-        for pattern in dangerous_patterns:
-            if pattern in query:
-                logger.warning(f"Blocked dangerous pattern in query: {pattern}")
-                return None
+        # Use shared security validation
+        if not is_safe_query(query):
+            logger.warning("Blocked unsafe query via security validation")
+            return None
 
         return query
 
@@ -341,30 +327,14 @@ Output ONLY the pandas expression (starting with df or pd). No variable names, n
             - valid: Whether query is safe to execute
             - issues: List of issues found
         """
-        issues = []
+        # Use shared security validation
+        result = validate_query_security(query)
+        issues = result["issues"].copy()
 
-        # Check for dangerous operations
-        dangerous = [
-            ("import ", "Import statements not allowed"),
-            ("exec(", "exec() not allowed"),
-            ("eval(", "Nested eval() not allowed"),
-            ("open(", "File operations not allowed"),
-            ("__", "Dunder methods not allowed"),
-            ("os.", "OS operations not allowed"),
-            ("sys.", "sys module not allowed"),
-            ("subprocess", "subprocess not allowed"),
-            ("lambda x: x(", "Function calls in lambda not allowed"),
-        ]
-
-        for pattern, message in dangerous:
-            if pattern in query:
-                issues.append(message)
-
-        # Check for basic structure
+        # Additional generator-specific checks
         if "df" not in query:
             issues.append("Query must reference 'df'")
 
-        # Check query length
         if len(query) > 1000:
             issues.append("Query too long (max 1000 chars)")
 

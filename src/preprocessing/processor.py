@@ -273,7 +273,9 @@ class PreprocessingPipeline:
 
                 # Process and extract text if there are attachments
                 if attachments:
-                    content = self.attachment_fetcher.process_all_page_attachments(page_id)
+                    content = self.attachment_fetcher.process_all_page_attachments(
+                        page_id, page_title=title
+                    )
                     page["attachment_content"] = content
                 else:
                     page["attachment_content"] = ""

@@ -152,21 +152,6 @@ DESCRIBE_PATTERNS: List[str] = [
 ]
 
 # =============================================================================
-# Comparison Patterns
-# =============================================================================
-
-COMPARISON_PATTERNS: List[str] = [
-    "compare",
-    "vs",
-    "versus",
-    "difference between",
-    "differences between",
-    "similar to",
-    "similarities between",
-    "how does .* compare",
-    ".* vs .*",
-]
-
 # =============================================================================
 # Chart Type Detection
 # =============================================================================
@@ -240,8 +225,10 @@ COMPARISON_CHART_INDICATORS: List[str] = [
 # =============================================================================
 
 
-def _calculate_score(query: str, indicators: List[str]) -> float:
+def calculate_indicator_score(query: str, indicators: List[str]) -> float:
     """Calculate match score against indicator list.
+
+    This is the canonical implementation used across the routing module.
 
     Args:
         query: Lowercase query string
@@ -254,6 +241,10 @@ def _calculate_score(query: str, indicators: List[str]) -> float:
     if matches == 0:
         return 0.0
     return min(1.0, matches / 3)
+
+
+# Keep internal alias for backwards compatibility
+_calculate_score = calculate_indicator_score
 
 
 def is_database_query(query: str) -> bool:

@@ -23,7 +23,6 @@ Example:
 """
 
 import os
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -412,6 +411,7 @@ Description (keep under {max_length} characters):"""
         self,
         page_id: str,
         cleanup: bool = True,
+        page_title: str = None,
     ) -> str:
         """
         Process all attachments for a page and return combined content.
@@ -422,22 +422,25 @@ Description (keep under {max_length} characters):"""
         Args:
             page_id: Confluence page ID
             cleanup: Whether to delete downloaded files after processing
+            page_title: Optional page title for logging
 
         Returns:
             Combined text content from all attachments
 
         Example:
-            >>> content = fetcher.process_all_page_attachments("123456")
+            >>> content = fetcher.process_all_page_attachments("123456", page_title="My Page")
             >>> print(f"Extracted {len(content)} characters from attachments")
         """
         # Fetch attachment metadata
         attachments = self.fetch_page_attachments(page_id)
 
+        page_display = f"'{page_title}' (ID: {page_id})" if page_title else f"page {page_id}"
+
         if not attachments:
-            logger.debug(f"No attachments found for page {page_id}")
+            logger.debug(f"No attachments found for {page_display}")
             return ""
 
-        logger.info(f"Processing {len(attachments)} attachments for page {page_id}")
+        logger.info(f"Processing {len(attachments)} attachments for {page_display}")
 
         all_content = []
         downloaded_files = []
