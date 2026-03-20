@@ -1,9 +1,9 @@
 """
-LLM-based smart query router with decomposition and parallel execution.
+LLM-based smart query router with unified analysis and parallel execution.
 
 This module provides an intelligent query routing system that:
-1. Analyzes queries using LLM to understand intent
-2. Decomposes complex queries into atomic sub-queries
+1. Analyzes queries using a SINGLE LLM call (UnifiedQueryAnalyzer)
+2. Extracts entities, classifies intent, and decomposes queries all at once
 3. Executes sub-queries in parallel across appropriate pipelines
 4. Aggregates results into a coherent response
 5. Supports multi-step queries with feedback loops via AgentOrchestrator
@@ -23,33 +23,11 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from .query_analyzer import LLMQueryAnalyzer, QueryAnalysisResult, SubQueryIntent
+from .types import QueryIntent, SubQuery
+from .unified_analyzer import UnifiedQueryAnalyzer, UnifiedAnalysisResult
 from .parallel_executor import ParallelQueryExecutor, SubQueryResult
 from .result_aggregator import ResultAggregator, AggregatedResult
-
-# Patterns for detecting list+describe queries (same as orchestrator)
-LIST_DESCRIBE_PATTERNS = [
-    "list all",
-    "list the",
-    "what projects",
-    "which projects",
-    "show all",
-    "get all",
-    "find all",
-]
-
-DESCRIBE_PATTERNS = [
-    "describe all",
-    "describe each",
-    "describe these",
-    "describe them",
-    "explain all",
-    "explain each",
-    "and describe",
-    "and explain",
-    "then describe",
-    "then explain",
-]
+from .patterns import is_list_describe_query
 
 # Import types for type hints
 try:
@@ -68,7 +46,7 @@ class SmartRouteResult:
         success: Overall success status
         answer: Final synthesized answer
         original_query: The original user query
-        analysis: Query analysis result
+        analysis: Unified analysis result (entities, intent, sub-queries)
         sub_results: Individual sub-query results
         sources: Combined sources
         queries: Generated database queries
@@ -79,7 +57,7 @@ class SmartRouteResult:
     success: bool
     answer: str
     original_query: str
-    analysis: Optional[QueryAnalysisResult] = None
+    analysis: Optional[UnifiedAnalysisResult] = None
     sub_results: List[SubQueryResult] = field(default_factory=list)
     sources: List[Dict[str, Any]] = field(default_factory=list)
     queries: List[str] = field(default_factory=list)
@@ -133,9 +111,9 @@ class SmartQueryRouter:
         self.db_pipeline = db_pipeline
         self.iliad_client = iliad_client
 
-        # Initialize components
+        # Initialize unified analyzer (single LLM call for all analysis)
         if iliad_client:
-            self.analyzer = LLMQueryAnalyzer(
+            self.analyzer = UnifiedQueryAnalyzer(
                 iliad_client=iliad_client,
                 model=analyzer_model,
             )
@@ -260,17 +238,24 @@ class SmartQueryRouter:
             if self.analyzer and not force_simple:
                 analysis = self.analyzer.analyze(query)
             else:
-                # Fallback: simple single-query analysis
-                from .query_analyzer import SubQuery, QueryAnalysisResult
+                # Fallback: simple single-query analysis using types from types.py
+                from .unified_analyzer import UnifiedAnalysisResult, EntityExtractionResult
 
-                analysis = QueryAnalysisResult(
+                analysis = UnifiedAnalysisResult(
                     original_query=query,
+                    entities=EntityExtractionResult(),
+                    primary_intent=QueryIntent.RAG,
+                    confidence=0.5,
                     sub_queries=[
                         SubQuery(
                             text=query,
-                            intent=SubQueryIntent.RAG,
+                            intent=QueryIntent.RAG,
                         )
                     ],
+                    is_complex=False,
+                    is_comparative=False,
+                    comparative_entities=[],
+                    analysis_reasoning="Fallback: no LLM analyzer available",
                 )
 
             logger.info(
@@ -518,17 +503,11 @@ class SmartQueryRouter:
         Returns:
             True if this is a list+describe pattern
         """
-        query_lower = query.lower()
-
-        # Check for both list AND describe keywords
-        has_list = any(pattern in query_lower for pattern in LIST_DESCRIBE_PATTERNS)
-        has_describe = any(pattern in query_lower for pattern in DESCRIBE_PATTERNS)
-
-        if has_list and has_describe:
-            logger.debug(f"Matched list+describe pattern: list={has_list}, describe={has_describe}")
-            return True
-
-        return False
+        # Use the shared function from patterns.py
+        result = is_list_describe_query(query)
+        if result:
+            logger.debug(f"Matched list+describe pattern for query: {query[:50]}...")
+        return result
 
     def supports_multistep(self) -> bool:
         """Check if multi-step routing is available.

@@ -1,0 +1,149 @@
+<!-- Debug Panel Component -->
+<div class="debug-panel" id="debug-panel">
+    <div class="debug-header" onclick="toggleDebugPanel()">
+        <div class="debug-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 16v-4M12 8h.01"/>
+            </svg>
+            Debug Information
+        </div>
+        <svg class="debug-toggle" id="debug-toggle" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 9l6 6 6-6"/>
+        </svg>
+    </div>
+    <div class="debug-content" id="debug-content">
+        <div class="debug-grid">
+            <div class="debug-item">
+                <div class="debug-label">Intent</div>
+                <div class="debug-value" id="debug-intent">
+                    <span class="intent-badge intent-default">Pending</span>
+                </div>
+            </div>
+            <div class="debug-item">
+                <div class="debug-label">Confidence</div>
+                <div class="debug-value" id="debug-confidence">-</div>
+            </div>
+            <div class="debug-item">
+                <div class="debug-label">Routing Mode</div>
+                <div class="debug-value" id="debug-routing">-</div>
+            </div>
+            <div class="debug-item">
+                <div class="debug-label">Execution Time</div>
+                <div class="debug-value" id="debug-time">-</div>
+            </div>
+            <div class="debug-item">
+                <div class="debug-label">Sources Count</div>
+                <div class="debug-value" id="debug-sources">-</div>
+            </div>
+            <div class="debug-item">
+                <div class="debug-label">Query ID</div>
+                <div class="debug-value" id="debug-query-id">{{ query_id }}</div>
+            </div>
+        </div>
+
+        <!-- Extracted Entities -->
+        <div class="debug-item mt-md" id="debug-entities-container" style="display: none;">
+            <div class="debug-label">Extracted Entities</div>
+            <div class="debug-value" id="debug-entities"></div>
+        </div>
+
+        <!-- Generated Query (for database queries) -->
+        <div class="debug-item mt-md" id="debug-query-container" style="display: none;">
+            <div class="debug-label">Generated Query</div>
+            <div class="debug-value" id="debug-generated-query"></div>
+        </div>
+
+        <!-- Sub-queries (for smart routing) -->
+        <div class="debug-item mt-md" id="debug-subqueries-container" style="display: none;">
+            <div class="debug-label">Sub-queries</div>
+            <div class="debug-value" id="debug-subqueries"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function toggleDebugPanel() {
+        const content = document.getElementById('debug-content');
+        const toggle = document.getElementById('debug-toggle');
+        content.classList.toggle('show');
+        toggle.classList.toggle('expanded');
+    }
+
+    function updateDebugPanel(data) {
+        // Update intent badge
+        if (data.intent) {
+            const intentBadge = document.getElementById('debug-intent');
+            const intentClass = 'intent-' + data.intent.toLowerCase();
+            intentBadge.innerHTML = `<span class="intent-badge ${intentClass}">${data.intent.toUpperCase()}</span>`;
+        }
+
+        // Update confidence
+        if (data.metadata && data.metadata.confidence !== undefined) {
+            document.getElementById('debug-confidence').textContent =
+                (data.metadata.confidence * 100).toFixed(1) + '%';
+        }
+
+        // Update routing mode
+        if (data.metadata && data.metadata.routing_mode) {
+            document.getElementById('debug-routing').textContent = data.metadata.routing_mode;
+        }
+
+        // Update execution time
+        if (data.execution_time) {
+            document.getElementById('debug-time').textContent = data.execution_time.toFixed(2) + 's';
+        }
+
+        // Update sources count
+        if (data.sources) {
+            document.getElementById('debug-sources').textContent = data.sources.length;
+        }
+
+        // Update extracted entities
+        if (data.metadata && data.metadata.extracted_entities) {
+            const entities = data.metadata.extracted_entities;
+            const entitiesContainer = document.getElementById('debug-entities-container');
+            const entitiesDiv = document.getElementById('debug-entities');
+
+            let entitiesHtml = '';
+            if (entities.projects && entities.projects.length > 0) {
+                entitiesHtml += `<strong>Projects:</strong> ${entities.projects.join(', ')}<br>`;
+            }
+            if (entities.people && entities.people.length > 0) {
+                entitiesHtml += `<strong>People:</strong> ${entities.people.join(', ')}<br>`;
+            }
+            if (entities.technologies && entities.technologies.length > 0) {
+                entitiesHtml += `<strong>Technologies:</strong> ${entities.technologies.join(', ')}<br>`;
+            }
+
+            if (entitiesHtml) {
+                entitiesDiv.innerHTML = entitiesHtml;
+                entitiesContainer.style.display = 'block';
+            }
+        }
+
+        // Update generated query
+        if (data.query) {
+            const queryContainer = document.getElementById('debug-query-container');
+            const queryDiv = document.getElementById('debug-generated-query');
+            queryDiv.innerHTML = `<code>${data.query}</code>`;
+            queryContainer.style.display = 'block';
+        }
+
+        // Update sub-queries
+        if (data.metadata && data.metadata.sub_queries) {
+            const subqueriesContainer = document.getElementById('debug-subqueries-container');
+            const subqueriesDiv = document.getElementById('debug-subqueries');
+
+            let subqueriesHtml = '<ul style="margin: 0; padding-left: 1rem;">';
+            data.metadata.sub_queries.forEach((sq, idx) => {
+                const intentClass = 'intent-' + (sq.intent || 'default').toLowerCase();
+                subqueriesHtml += `<li><span class="intent-badge ${intentClass}" style="font-size: 0.625rem;">${sq.intent}</span> ${sq.text}</li>`;
+            });
+            subqueriesHtml += '</ul>';
+
+            subqueriesDiv.innerHTML = subqueriesHtml;
+            subqueriesContainer.style.display = 'block';
+        }
+    }
+</script>

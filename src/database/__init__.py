@@ -14,10 +14,12 @@ from .dataframe_loader import DataFrameLoader
 from .query_generator import QueryGenerator
 from .query_executor import QueryExecutor
 from .pipeline import DatabasePipeline
+from .fuzzy_matcher import FuzzyMatcher
 
 __all__ = [
     "DataFrameLoader",
     "QueryGenerator",
     "QueryExecutor",
     "DatabasePipeline",
+    "FuzzyMatcher",
 ]

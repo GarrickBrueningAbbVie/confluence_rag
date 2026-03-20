@@ -15,8 +15,8 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
+from .types import QueryIntent
 from .parallel_executor import SubQueryResult
-from .query_analyzer import SubQueryIntent
 
 # Import types for type hints
 try:
@@ -297,11 +297,11 @@ class ResultAggregator:
                 continue
 
             intent_label = {
-                SubQueryIntent.RAG: "Documentation",
-                SubQueryIntent.DATABASE: "Data Query",
-                SubQueryIntent.HYBRID: "Combined",
-                SubQueryIntent.CHART: "Visualization",
-                SubQueryIntent.TABLE: "Table",
+                QueryIntent.RAG: "Documentation",
+                QueryIntent.DATABASE: "Data Query",
+                QueryIntent.HYBRID: "Combined",
+                QueryIntent.CHART: "Visualization",
+                QueryIntent.TABLE: "Table",
             }.get(result.sub_query.intent, "Result")
 
             answer = self._format_single_answer(result)

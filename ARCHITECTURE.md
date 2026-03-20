@@ -613,6 +613,43 @@ Falls back to standard retrieval if project identification returns no results.
    - Example: "📄 1. Page Title (Documents 1, 2, 4)"
 6. Relevance scores in sidebar grouped by unique source
 
+#### **Django Web Application** (`web_app/`)
+
+**Features:**
+- Google-like landing page with centered search
+- Real-time progress bar with WebSocket updates
+- Debug panel showing routing info, entities, and execution details
+- Smart answer display (Markdown, tables, charts)
+- Source document viewer with deduplication
+- REST API for programmatic access
+- Dark mode with AbbVie branding
+
+**Components:**
+
+| Module | Purpose |
+|--------|---------|
+| `core/` | Main app (landing, search, results views) |
+| `api/` | REST API endpoints (query, status, health) |
+| `realtime/` | WebSocket consumers for progress |
+| `templates/` | Jinja2 templates with components |
+| `static/` | CSS (AbbVie theme), JS (progress, charts) |
+
+**REST API Endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/query/` | POST | Execute query (sync/async) |
+| `/api/v1/query/{id}/status/` | GET | Check query status |
+| `/api/v1/health/` | GET | Service health check |
+
+**Running:**
+```bash
+cd web_app
+python manage.py migrate
+python manage.py runserver
+# Visit http://localhost:8000
+```
+
 #### **Jupyter Notebook** (`notebooks/02_rag_queries.ipynb`)
 
 **Features:**

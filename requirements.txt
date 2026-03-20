@@ -14,9 +14,17 @@ pandas
 # NLP
 nltk
 
-# UI
+# UI - Streamlit
 streamlit
 plotly
+
+# UI - Django Web App
+Django>=4.2
+djangorestframework>=3.14
+django-cors-headers
+channels>=4.0
+channels-redis
+daphne
 
 # Code Quality
 black

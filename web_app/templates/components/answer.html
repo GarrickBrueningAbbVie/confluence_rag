@@ -1,0 +1,164 @@
+<!-- Answer Component -->
+<section class="answer-section">
+    <div class="answer-content" id="answer-content">
+        <!-- Answer will be rendered here by JavaScript -->
+    </div>
+</section>
+
+<!-- Table Display (for structured data) -->
+<div id="table-container" style="display: none;">
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Results</h3>
+            <span class="text-muted" id="table-row-count"></span>
+        </div>
+        <div class="table-responsive">
+            <table class="results-table" id="results-table">
+                <thead id="table-head"></thead>
+                <tbody id="table-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    function displayAnswer(answer, answerType) {
+        console.log('displayAnswer called with:', { answer, answerType, type: typeof answer });
+
+        const answerSection = document.getElementById('answer-section');
+        const answerContent = document.getElementById('answer-content');
+        const tableContainer = document.getElementById('table-container');
+
+        if (!answerSection || !answerContent) {
+            console.error('Answer section or content element not found');
+            return;
+        }
+
+        answerSection.style.display = 'block';
+
+        // Check if answer is tabular data
+        if (answerType === 'table' || (Array.isArray(answer) && answer.length > 0 && typeof answer[0] === 'object')) {
+            console.log('Displaying as table');
+            displayTable(answer);
+            if (tableContainer) {
+                tableContainer.style.display = 'block';
+            }
+            answerContent.innerHTML = '<p class="text-muted">See the table below for detailed results.</p>';
+        } else if (typeof answer === 'object' && !Array.isArray(answer)) {
+            // JSON object - display as formatted JSON or convert to table
+            console.log('Displaying as JSON');
+            displayJsonAnswer(answer);
+        } else {
+            // Regular text answer - render as Markdown
+            console.log('Displaying as Markdown');
+            try {
+                answerContent.innerHTML = marked.parse(String(answer));
+            } catch (e) {
+                console.error('Error parsing markdown:', e);
+                answerContent.textContent = String(answer);
+            }
+        }
+    }
+
+    function displayTable(data) {
+        const tableHead = document.getElementById('table-head');
+        const tableBody = document.getElementById('table-body');
+        const rowCount = document.getElementById('table-row-count');
+
+        if (!Array.isArray(data) || data.length === 0) {
+            return;
+        }
+
+        // Get columns from first row
+        const columns = Object.keys(data[0]);
+
+        // Build header
+        let headerHtml = '<tr>';
+        columns.forEach(col => {
+            headerHtml += `<th>${col}</th>`;
+        });
+        headerHtml += '</tr>';
+        tableHead.innerHTML = headerHtml;
+
+        // Build body
+        let bodyHtml = '';
+        data.forEach(row => {
+            bodyHtml += '<tr>';
+            columns.forEach(col => {
+                const value = row[col];
+                const displayValue = value !== null && value !== undefined ? String(value) : '-';
+                bodyHtml += `<td>${displayValue}</td>`;
+            });
+            bodyHtml += '</tr>';
+        });
+        tableBody.innerHTML = bodyHtml;
+
+        // Update row count
+        rowCount.textContent = `${data.length} row${data.length !== 1 ? 's' : ''}`;
+    }
+
+    function displayJsonAnswer(obj) {
+        const answerContent = document.getElementById('answer-content');
+
+        // Try to format as key-value pairs
+        let html = '<dl class="json-display">';
+        for (const [key, value] of Object.entries(obj)) {
+            html += `<dt>${key}</dt>`;
+            if (typeof value === 'object') {
+                html += `<dd><pre>${JSON.stringify(value, null, 2)}</pre></dd>`;
+            } else {
+                html += `<dd>${value}</dd>`;
+            }
+        }
+        html += '</dl>';
+
+        answerContent.innerHTML = html;
+    }
+</script>
+
+<style>
+    .json-display {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: var(--spacing-sm) var(--spacing-md);
+    }
+
+    .json-display dt {
+        font-weight: 600;
+        color: var(--abbvie-medium-blue);
+    }
+
+    .json-display dd {
+        margin: 0;
+    }
+
+    .json-display pre {
+        margin: 0;
+        padding: var(--spacing-sm);
+        background-color: var(--bg-tertiary);
+        border-radius: var(--radius-sm);
+        overflow-x: auto;
+        font-size: 0.8125rem;
+    }
+
+    .table-responsive {
+        overflow-x: auto;
+        margin-top: var(--spacing-md);
+        border-radius: var(--radius-md);
+    }
+
+    #table-container .card {
+        margin-top: var(--spacing-lg);
+    }
+
+    /* Ensure table cells have proper text styling */
+    .results-table td {
+        vertical-align: top;
+        word-wrap: break-word;
+        max-width: 300px;
+    }
+
+    .results-table td:first-child {
+        font-weight: 500;
+    }
+</style>

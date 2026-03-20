@@ -11,11 +11,13 @@ Uses the Iliad API for intelligent extraction of:
 - Query intent and comparison detection
 """
 
-import json
 import re
 from typing import Any, List, Optional, Tuple
 from dataclasses import dataclass, field
 from loguru import logger
+
+# Use shared JSON parsing utility
+from utils.json_parser import parse_llm_json_response
 
 # Runtime imports - IliadClient is optional
 ILIAD_AVAILABLE = False
@@ -325,38 +327,15 @@ class QueryProcessor:
         """
         Parse JSON response from LLM.
 
+        Uses the shared JSON parsing utility from utils.json_parser.
+
         Args:
             content: Raw LLM response string.
 
         Returns:
             Parsed dictionary or None if parsing fails.
         """
-        # Try to extract JSON from response
-        content = content.strip()
-
-        # Handle markdown code blocks
-        if content.startswith("```"):
-            # Remove code block markers
-            lines = content.split("\n")
-            # Filter out ``` lines
-            json_lines = [l for l in lines if not l.strip().startswith("```")]
-            content = "\n".join(json_lines)
-
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON parse error: {e}")
-
-            # Try to find JSON object in response
-            json_match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
-            if json_match:
-                try:
-                    return json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    pass
-
-            logger.error(f"Could not parse LLM response: {content[:200]}")
-            return None
+        return parse_llm_json_response(content)
 
     def _extract_with_regex(self, query: str) -> ProcessedQuery:
         """

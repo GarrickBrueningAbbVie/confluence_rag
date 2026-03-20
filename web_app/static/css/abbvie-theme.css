@@ -1,0 +1,680 @@
+/**
+ * AbbVie Theme CSS for Confluence RAG Web Application
+ *
+ * Color scheme based on AbbVie brand guidelines.
+ */
+
+/* CSS Variables - AbbVie Color Palette */
+:root {
+    /* Primary Colors */
+    --abbvie-dark-blue: #071D49;
+    --abbvie-white: #FFFFFF;
+    --abbvie-medium-blue: #A6B5E0;
+    --abbvie-light-blue: #EDF0FF;
+
+    /* Secondary Colors */
+    --abbvie-purple: #8A2ECC;
+    --abbvie-purple-light: #A86BDE;
+    --abbvie-cobalt: #0066F5;
+    --abbvie-cobalt-light: #00A1FF;
+    --abbvie-red: #CF451C;
+    --abbvie-red-light: #F7634F;
+    --abbvie-green: #338700;
+    --abbvie-green-light: #45AB00;
+
+    /* Tertiary Colors */
+    --abbvie-medium-gray: #B9B4B4;
+    --abbvie-light-gray: #E8E8E8;
+    --abbvie-dark-gray: #4B4C4E;
+    --abbvie-black: #000000;
+
+    /* Dark Mode Backgrounds */
+    --bg-primary: #0E1117;
+    --bg-secondary: #262730;
+    --bg-tertiary: #1E1E1E;
+    --bg-card: #1A1A2E;
+
+    /* Spacing */
+    --spacing-xs: 0.25rem;
+    --spacing-sm: 0.5rem;
+    --spacing-md: 1rem;
+    --spacing-lg: 1.5rem;
+    --spacing-xl: 2rem;
+    --spacing-xxl: 3rem;
+
+    /* Border Radius */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 24px;
+    --radius-full: 9999px;
+
+    /* Transitions */
+    --transition-fast: 150ms ease;
+    --transition-normal: 250ms ease;
+    --transition-slow: 350ms ease;
+
+    /* Fonts */
+    --font-primary: 'Roboto', 'Arial', sans-serif;
+    --font-mono: 'Roboto Mono', 'Consolas', monospace;
+}
+
+/* Reset and Base Styles */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html {
+    font-size: 16px;
+    scroll-behavior: smooth;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-primary);
+    background-color: var(--bg-primary);
+    color: var(--abbvie-white);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+    margin: 0 0 var(--spacing-md) 0;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+h1 { font-size: 2.5rem; }
+h2 { font-size: 2rem; }
+h3 { font-size: 1.5rem; }
+h4 { font-size: 1.25rem; }
+
+p {
+    margin: 0 0 var(--spacing-md) 0;
+}
+
+a {
+    color: var(--abbvie-cobalt-light);
+    text-decoration: none;
+    transition: color var(--transition-fast);
+}
+
+a:hover {
+    color: var(--abbvie-cobalt);
+    text-decoration: underline;
+}
+
+/* Landing Page Styles */
+.landing-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: var(--spacing-xl);
+    background: linear-gradient(135deg, var(--abbvie-dark-blue) 0%, var(--bg-primary) 100%);
+}
+
+.landing-title {
+    font-size: 3rem;
+    font-weight: 700;
+    color: var(--abbvie-white);
+    text-align: center;
+    margin-bottom: var(--spacing-xl);
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.landing-title .accent {
+    color: var(--abbvie-purple);
+}
+
+/* Search Box Styles */
+.search-container {
+    width: 100%;
+    max-width: 700px;
+    margin-bottom: var(--spacing-xl);
+}
+
+.search-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+.search-input-wrapper {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    background-color: var(--bg-secondary);
+    border: 2px solid var(--abbvie-medium-blue);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-sm);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    overflow: hidden;
+}
+
+.search-input-wrapper:focus-within {
+    border-color: var(--abbvie-purple);
+    box-shadow: 0 0 0 3px rgba(138, 46, 204, 0.3);
+}
+
+.search-input {
+    flex: 1;
+    min-height: 44px;
+    max-height: 200px;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 1.125rem;
+    font-family: var(--font-primary);
+    border: none;
+    background-color: transparent;
+    color: var(--abbvie-white);
+    outline: none;
+    resize: none;
+    overflow: hidden;
+    line-height: 1.5;
+    /* Hide scrollbar when JS enables overflow-y: auto for long content */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.search-input::-webkit-scrollbar {
+    display: none;
+}
+
+.search-input::placeholder {
+    color: var(--abbvie-medium-gray);
+}
+
+.search-button {
+    flex-shrink: 0;
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-size: 1rem;
+    font-weight: 600;
+    font-family: var(--font-primary);
+    color: var(--abbvie-white);
+    background-color: var(--abbvie-purple);
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background-color var(--transition-fast), transform var(--transition-fast);
+    align-self: flex-end;
+    min-height: 44px;
+}
+
+.search-button:hover {
+    background-color: var(--abbvie-cobalt);
+    transform: scale(1.02);
+}
+
+.search-button:active {
+    transform: scale(0.98);
+}
+
+/* Example Queries */
+.example-queries {
+    text-align: center;
+    color: var(--abbvie-medium-blue);
+}
+
+.example-queries h4 {
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-bottom: var(--spacing-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.example-list {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.example-list li {
+    padding: var(--spacing-xs) var(--spacing-md);
+    background-color: var(--bg-tertiary);
+    border-radius: var(--radius-full);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: background-color var(--transition-fast);
+}
+
+.example-list li:hover {
+    background-color: var(--abbvie-dark-blue);
+}
+
+/* Intent Badges */
+.intent-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--spacing-xs) var(--spacing-md);
+    border-radius: var(--radius-full);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.intent-rag {
+    background-color: var(--abbvie-cobalt);
+    color: var(--abbvie-white);
+}
+
+.intent-database {
+    background-color: var(--abbvie-green);
+    color: var(--abbvie-white);
+}
+
+.intent-hybrid {
+    background-color: var(--abbvie-purple);
+    color: var(--abbvie-white);
+}
+
+.intent-smart {
+    background-color: var(--abbvie-purple);
+    color: var(--abbvie-white);
+}
+
+.intent-chart {
+    background-color: var(--abbvie-red);
+    color: var(--abbvie-white);
+}
+
+.intent-default {
+    background-color: var(--abbvie-medium-gray);
+    color: var(--abbvie-dark-blue);
+}
+
+/* Progress Bar */
+.progress-container {
+    width: 100%;
+    margin: var(--spacing-lg) 0;
+}
+
+.progress-bar-wrapper {
+    height: 8px;
+    background-color: var(--bg-tertiary);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--abbvie-purple) 0%, var(--abbvie-cobalt) 100%);
+    border-radius: var(--radius-full);
+    transition: width var(--transition-normal);
+}
+
+.progress-text {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: var(--spacing-sm);
+    font-size: 0.875rem;
+    color: var(--abbvie-medium-blue);
+}
+
+.progress-step {
+    font-weight: 500;
+}
+
+.progress-percent {
+    font-family: var(--font-mono);
+}
+
+/* Cards */
+.card {
+    background-color: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+    border: 1px solid var(--bg-tertiary);
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+    padding-bottom: var(--spacing-md);
+    border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.card-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+/* Debug Panel */
+.debug-panel {
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-lg);
+    border: 1px solid var(--bg-tertiary);
+}
+
+.debug-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md) var(--spacing-lg);
+    cursor: pointer;
+    user-select: none;
+}
+
+.debug-header:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.debug-title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    font-weight: 600;
+    color: var(--abbvie-medium-blue);
+}
+
+.debug-toggle {
+    color: var(--abbvie-medium-gray);
+    transition: transform var(--transition-fast);
+}
+
+.debug-toggle.expanded {
+    transform: rotate(180deg);
+}
+
+.debug-content {
+    padding: var(--spacing-lg);
+    border-top: 1px solid var(--bg-tertiary);
+    display: none;
+}
+
+.debug-content.show {
+    display: block;
+}
+
+.debug-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.debug-item {
+    padding: var(--spacing-sm);
+    background-color: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+}
+
+.debug-label {
+    font-size: 0.75rem;
+    color: var(--abbvie-medium-gray);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--spacing-xs);
+}
+
+.debug-value {
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    word-break: break-all;
+}
+
+/* Answer Section */
+.answer-section {
+    background-color: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-xl);
+    margin-bottom: var(--spacing-lg);
+    border-left: 4px solid var(--abbvie-purple);
+}
+
+.answer-content {
+    font-size: 1.0625rem;
+    line-height: 1.8;
+}
+
+.answer-content p {
+    margin-bottom: var(--spacing-md);
+}
+
+.answer-content ul, .answer-content ol {
+    margin: var(--spacing-md) 0;
+    padding-left: var(--spacing-xl);
+}
+
+.answer-content li {
+    margin-bottom: var(--spacing-sm);
+}
+
+.answer-content code {
+    font-family: var(--font-mono);
+    background-color: var(--bg-tertiary);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    font-size: 0.9em;
+}
+
+/* Sources Section */
+.sources-section {
+    margin-top: var(--spacing-xl);
+}
+
+.sources-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+    color: var(--abbvie-medium-blue);
+}
+
+.source-item {
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
+    border: 1px solid var(--bg-tertiary);
+    transition: border-color var(--transition-fast);
+}
+
+.source-item:hover {
+    border-color: var(--abbvie-purple);
+}
+
+.source-title {
+    font-weight: 600;
+    margin-bottom: var(--spacing-xs);
+}
+
+.source-title a {
+    color: var(--abbvie-cobalt-light);
+}
+
+.source-meta {
+    display: flex;
+    gap: var(--spacing-md);
+    font-size: 0.875rem;
+    color: var(--abbvie-medium-gray);
+}
+
+.source-excerpt {
+    margin-top: var(--spacing-sm);
+    font-size: 0.875rem;
+    color: var(--abbvie-light-gray);
+    padding-left: var(--spacing-md);
+    border-left: 2px solid var(--bg-tertiary);
+}
+
+/* Tables */
+.results-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--abbvie-dark-gray);
+}
+
+.results-table th,
+.results-table td {
+    padding: var(--spacing-md);
+    text-align: left;
+    border-bottom: 1px solid var(--abbvie-dark-gray);
+    border-right: 1px solid var(--abbvie-dark-gray);
+}
+
+.results-table th:last-child,
+.results-table td:last-child {
+    border-right: none;
+}
+
+.results-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.results-table th {
+    background-color: var(--abbvie-dark-blue);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    color: var(--abbvie-white);
+    border-bottom: 2px solid var(--abbvie-purple);
+}
+
+.results-table tbody tr:nth-child(even) {
+    background-color: var(--bg-tertiary);
+}
+
+.results-table tbody tr:hover {
+    background-color: rgba(138, 46, 204, 0.15);
+}
+
+/* Chart Container */
+.chart-container {
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+    min-height: 400px;
+}
+
+.chart-container #plotly-chart {
+    min-height: 350px;
+    width: 100%;
+}
+
+.chart-caption {
+    text-align: center;
+    font-size: 0.875rem;
+    color: var(--abbvie-medium-blue);
+    margin-top: var(--spacing-md);
+}
+
+/* Ensure Plotly charts are visible */
+.js-plotly-plot {
+    min-height: 350px !important;
+}
+
+.js-plotly-plot .plot-container {
+    min-height: 350px !important;
+}
+
+/* Loading States */
+.loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-xl);
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--bg-tertiary);
+    border-top-color: var(--abbvie-purple);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-size: 0.875rem;
+    font-weight: 600;
+    font-family: var(--font-primary);
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-primary {
+    background-color: var(--abbvie-purple);
+    color: var(--abbvie-white);
+}
+
+.btn-primary:hover {
+    background-color: var(--abbvie-cobalt);
+}
+
+.btn-secondary {
+    background-color: var(--bg-tertiary);
+    color: var(--abbvie-white);
+}
+
+.btn-secondary:hover {
+    background-color: var(--abbvie-dark-blue);
+}
+
+/* Utility Classes */
+.text-center { text-align: center; }
+.text-muted { color: var(--abbvie-medium-gray); }
+.mt-sm { margin-top: var(--spacing-sm); }
+.mt-md { margin-top: var(--spacing-md); }
+.mt-lg { margin-top: var(--spacing-lg); }
+.mb-sm { margin-bottom: var(--spacing-sm); }
+.mb-md { margin-bottom: var(--spacing-md); }
+.mb-lg { margin-bottom: var(--spacing-lg); }
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .landing-title {
+        font-size: 2rem;
+    }
+
+    .search-input-wrapper {
+        flex-direction: column;
+    }
+
+    .search-input {
+        font-size: 1rem;
+        width: 100%;
+    }
+
+    .search-button {
+        padding: var(--spacing-sm) var(--spacing-md);
+        font-size: 0.875rem;
+        width: 100%;
+        align-self: stretch;
+    }
+
+    .debug-grid {
+        grid-template-columns: 1fr;
+    }
+}

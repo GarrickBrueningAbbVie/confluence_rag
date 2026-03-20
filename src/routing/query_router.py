@@ -2,43 +2,39 @@
 Query router for hybrid RAG + Database pipeline.
 
 This module routes queries to the appropriate pipeline(s) based on
-intent classification, entity extraction, and combines results.
+intent classification and combines results.
 
-Routing logic:
-1. Extract entities (projects, people) from query via LLM
-2. If entities found → RAG with entity-based filtering
-3. If no entities AND aggregation/listing query → Database pipeline
-4. If no entities AND informational query → RAG with similarity fallback
+Routing modes:
+1. Smart mode (default): LLM-based unified analysis with query decomposition
+2. Rule-based (fallback): Fast keyword matching for simple queries
 
-Two routing modes available:
-1. Rule-based (default): Fast keyword matching for simple queries
-2. Smart mode: LLM-based query decomposition for complex queries
+The smart mode uses UnifiedQueryAnalyzer which performs entity extraction,
+intent classification, and query decomposition in a SINGLE LLM call.
 
 Example:
     >>> from routing.query_router import QueryRouter
     >>> router = QueryRouter(rag_pipeline, db_pipeline, iliad_client)
     >>> result = router.route("How many pages use Python?")
 
-    >>> # Enable smart mode for complex queries
-    >>> router = QueryRouter(rag_pipeline, db_pipeline, iliad_client, use_smart_routing=True)
-    >>> result = router.route("Describe ALFA and count how many projects reference it")
+    >>> # Smart mode handles complex queries automatically
+    >>> result = router.route("Compare ALFA and CloverX projects")
 """
 
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from .intent_classifier import IntentClassifier, QueryIntent, ClassificationResult
+from .types import QueryIntent, ClassificationResult
+from .intent_classifier import IntentClassifier
 from .response_combiner import ResponseCombiner
+from .formatters import format_db_answer
 
 # Import types for type hints
 try:
     from iliad.client import IliadClient
     from database.pipeline import DatabasePipeline
-    from rag.query_processor import QueryProcessor, ProcessedQuery
 except ImportError:
-    QueryProcessor = None
-    ProcessedQuery = None
+    pass
 
 
 class QueryRouter:
@@ -60,14 +56,12 @@ class QueryRouter:
     """
 
     def __init__(
-    
         self,
         rag_pipeline: Any,  # Type hint as Any to avoid circular import
         db_pipeline: Optional["DatabasePipeline"] = None,
         iliad_client: Optional["IliadClient"] = None,
         use_llm_fallback: bool = False,
         use_smart_routing: bool = True,
-        use_entity_routing: bool = True,
     ) -> None:
         """Initialize query router.
 
@@ -75,33 +69,24 @@ class QueryRouter:
             rag_pipeline: RAG pipeline instance
             db_pipeline: Optional database pipeline instance
             iliad_client: Optional Iliad client for LLM operations
-            use_llm_fallback: Whether to use LLM for ambiguous classification
-            use_smart_routing: Use LLM-based smart routing with query decomposition
-            use_entity_routing: Use entity extraction to inform routing decisions
+            use_llm_fallback: Whether to use LLM for ambiguous classification (rule-based fallback)
+            use_smart_routing: Use LLM-based smart routing with unified analysis (default: True)
         """
         self.rag_pipeline = rag_pipeline
         self.db_pipeline = db_pipeline
         self.iliad_client = iliad_client
         self.use_smart_routing = use_smart_routing
-        self.use_entity_routing = use_entity_routing
 
+        # Intent classifier for rule-based fallback
         self.classifier = IntentClassifier(
             iliad_client=iliad_client,
             use_llm_fallback=use_llm_fallback,
         )
 
+        # Response combiner for hybrid queries
         self.combiner = ResponseCombiner(iliad_client=iliad_client)
 
-        # Initialize query processor for entity extraction
-        if use_entity_routing and QueryProcessor is not None:
-            self.query_processor = QueryProcessor(
-                iliad_client=iliad_client,
-                use_llm=iliad_client is not None,
-            )
-        else:
-            self.query_processor = None
-
-        # Initialize smart router if enabled
+        # Initialize smart router with unified analyzer if enabled
         if use_smart_routing and iliad_client:
             from .smart_router import SmartQueryRouter
 
@@ -115,8 +100,7 @@ class QueryRouter:
 
         logger.info(
             f"Initialized QueryRouter "
-            f"(DB: {db_pipeline is not None}, Smart: {use_smart_routing}, "
-            f"EntityRouting: {use_entity_routing and self.query_processor is not None})"
+            f"(DB: {db_pipeline is not None}, Smart: {use_smart_routing})"
         )
 
     def route(
@@ -129,11 +113,9 @@ class QueryRouter:
         """
         Route a query to appropriate pipeline(s).
 
-        Routing logic with entity extraction:
-        1. Extract entities (projects, people) from query via LLM
-        2. Classify query intent (RAG, DATABASE, HYBRID, CHART)
-        3. If no entities extracted AND intent suggests database query → Database
-        4. If entities extracted OR informational intent → RAG (with entity filtering)
+        Routing logic:
+        1. If smart routing enabled: Use UnifiedQueryAnalyzer for single-LLM-call analysis
+        2. Otherwise: Fall back to rule-based keyword classification
 
         Args:
             query: User query string
@@ -161,7 +143,7 @@ class QueryRouter:
 
         # Use smart router if enabled and no forced intent
         if should_use_smart and self.smart_router and not force_intent:
-            logger.info("Route selected: SMART (LLM-based query decomposition)")
+            logger.info("Route selected: SMART (unified LLM analysis)")
             return self._route_smart(query, return_metadata)
 
         # Fall back to rule-based routing
@@ -175,26 +157,7 @@ class QueryRouter:
             "metadata": {},
         }
 
-        # Extract entities from query (if entity routing enabled)
-        processed_query = None
-        has_entities = False
-        if self.use_entity_routing and self.query_processor:
-            processed_query = self.query_processor.process_query(query)
-            has_entities = (
-                len(processed_query.potential_project_names) > 0 or
-                len(processed_query.potential_person_names) > 0
-            )
-            logger.info("Entity extraction results:")
-            if processed_query.potential_project_names:
-                logger.info(f"  Projects: {processed_query.potential_project_names}")
-            if processed_query.potential_person_names:
-                logger.info(f"  People: {processed_query.potential_person_names}")
-            if processed_query.query_intent:
-                logger.info(f"  Query intent: {processed_query.query_intent}")
-            if not has_entities:
-                logger.info("  No entities extracted from query")
-
-        # Classify intent
+        # Classify intent using rule-based classifier
         if force_intent:
             classification = ClassificationResult(
                 intent=force_intent,
@@ -204,52 +167,21 @@ class QueryRouter:
         else:
             classification = self.classifier.classify(query)
 
-        # Apply entity-based routing override
-        # If no entities and query is aggregation/listing → prefer Database
-        # If entities found → prefer RAG (entity filtering handles it)
         final_intent = classification.intent
-        routing_override = None
-
-        if self.use_entity_routing and not force_intent:
-            if not has_entities and classification.intent == QueryIntent.RAG:
-                # Check if this looks like a database query based on processed_query intent
-                if processed_query and processed_query.query_intent in ["aggregation", "listing"]:
-                    final_intent = QueryIntent.DATABASE
-                    routing_override = "No entities + aggregation/listing → Database"
-                    logger.info(f"Routing override: {routing_override}")
-            elif has_entities and classification.intent == QueryIntent.DATABASE:
-                # If entities found but classified as database, consider hybrid
-                # since we have specific entities to search for
-                if processed_query and processed_query.query_intent not in ["aggregation"]:
-                    final_intent = QueryIntent.HYBRID
-                    routing_override = "Entities found + database intent → Hybrid"
-                    logger.info(f"Routing override: {routing_override}")
-
         result["intent"] = final_intent.value
 
         if return_metadata:
             result["metadata"] = {
                 "intent": final_intent.value,
-                "original_intent": classification.intent.value,
                 "confidence": classification.confidence,
                 "reasoning": classification.reasoning,
-                "routing_mode": "entity_aware" if self.use_entity_routing else "rule_based",
-                "routing_override": routing_override,
-                "has_entities": has_entities,
+                "routing_mode": "rule_based",
             }
-            if processed_query:
-                result["metadata"]["extracted_entities"] = {
-                    "projects": processed_query.potential_project_names,
-                    "people": processed_query.potential_person_names,
-                    "query_intent": processed_query.query_intent,
-                }
 
         logger.info(
             f"Query classified as {final_intent.value.upper()} "
-            f"(original: {classification.intent.value}, confidence: {classification.confidence:.2f})"
+            f"(confidence: {classification.confidence:.2f})"
         )
-        if routing_override:
-            logger.info(f"Routing override applied: {routing_override}")
 
         # Route based on final intent
         try:
@@ -268,6 +200,10 @@ class QueryRouter:
             elif final_intent == QueryIntent.CHART:
                 logger.info("Executing pipeline: CHART (visualization)")
                 result = self._route_chart(query, result)
+
+            elif final_intent == QueryIntent.TABLE:
+                logger.info("Executing pipeline: TABLE (tabular data)")
+                result = self._route_database(query, result)
 
         except Exception as e:
             logger.error(f"Routing failed: {e}")
@@ -523,46 +459,7 @@ class QueryRouter:
         Returns:
             Formatted string
         """
-        if answer is None:
-            return "No results found."
-
-        if isinstance(answer, (int, float)):
-            return str(answer)
-
-        if isinstance(answer, str):
-            return answer
-
-        if isinstance(answer, list):
-            if len(answer) == 0:
-                return "No results found."
-
-            if len(answer) <= 10:
-                # Format as list
-                if isinstance(answer[0], dict):
-                    lines = []
-                    for item in answer:
-                        line = ", ".join(f"{k}: {v}" for k, v in item.items())
-                        lines.append(f"- {line}")
-                    return "\n".join(lines)
-                return "\n".join(f"- {item}" for item in answer)
-
-            # Truncate long lists
-            preview = answer[:10]
-            if isinstance(preview[0], dict):
-                lines = []
-                for item in preview:
-                    line = ", ".join(f"{k}: {v}" for k, v in item.items())
-                    lines.append(f"- {line}")
-                lines.append(f"... and {len(answer) - 10} more items")
-                return "\n".join(lines)
-
-            return "\n".join(f"- {item}" for item in preview) + f"\n... and {len(answer) - 10} more items"
-
-        if isinstance(answer, dict):
-            lines = [f"- {k}: {v}" for k, v in answer.items()]
-            return "\n".join(lines)
-
-        return str(answer)
+        return format_db_answer(answer)
 
     def get_available_modes(self) -> List[str]:
         """Get list of available routing modes.

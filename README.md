@@ -37,6 +37,17 @@ python -m src.data_pipeline --vectorize-only
 
 ### Launch UI
 
+**Django Web App (Recommended):**
+
+```bash
+cd web_app
+python manage.py migrate
+python manage.py runserver
+# Open http://localhost:8000
+```
+
+**Streamlit App (Alternative):**
+
 ```bash
 streamlit run src/ui/app.py
 ```
@@ -71,6 +82,13 @@ src/
 ├── agents/          # Multi-step query agents
 ├── visualization/   # Chart generation
 └── ui/              # Streamlit application
+
+web_app/             # Django Web Application
+├── core/            # Main app (landing, search, results)
+├── api/             # REST API endpoints
+├── realtime/        # WebSocket progress updates
+├── templates/       # HTML templates
+└── static/          # CSS, JavaScript
 ```
 
 ## Configuration
@@ -90,12 +108,26 @@ See `.env.example` for all options.
 
 ## Usage Example
 
+**Python API:**
+
 ```python
 from routing.query_router import QueryRouter
 
 router = QueryRouter(rag_pipeline, db_pipeline, iliad_client)
 result = router.route("How many pages mention Airflow?")
 print(result['answer'])
+```
+
+**REST API:**
+
+```bash
+# Execute a query
+curl -X POST http://localhost:8000/api/v1/query/ \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What is ALFA?", "mode": "auto"}'
+
+# Check health
+curl http://localhost:8000/api/v1/health/
 ```
 
 ## Development

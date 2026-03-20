@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}DSA Confluence RAG{% endblock %}
+
+{% block content %}
+<div class="landing-container">
+    <!-- Main Title -->
+    <h1 class="landing-title">
+        <span class="accent">DSA</span> Confluence RAG
+    </h1>
+
+    <!-- Search Box -->
+    <div class="search-container">
+        <form class="search-form" action="{% url 'core:search' %}" method="post">
+            {% csrf_token %}
+            <div class="search-input-wrapper">
+                <textarea
+                    name="query"
+                    class="search-input"
+                    placeholder="Ask a question about DSA projects..."
+                    autocomplete="off"
+                    autofocus
+                    required
+                    id="search-input"
+                    rows="1"
+                ></textarea>
+                <button type="submit" class="search-button">
+                    Search
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Example Queries -->
+    <div class="example-queries">
+        <h4>Try asking:</h4>
+        <ul class="example-list" id="example-list">
+            <li data-query="What is ALFA?">What is ALFA?</li>
+            <li data-query="How many pages use Python?">How many pages use Python?</li>
+            <li data-query="List projects that use XGBoost">List projects that use XGBoost</li>
+            <li data-query="Show me a chart of pages by technology">Chart of pages by technology</li>
+            <li data-query="Compare ALFA and GraphRAG projects">Compare ALFA and GraphRAG</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const searchInput = document.getElementById('search-input');
+
+    // Auto-resize textarea based on content
+    function autoResize() {
+        searchInput.style.height = 'auto';
+        const maxHeight = 200;
+        const newHeight = Math.min(searchInput.scrollHeight, maxHeight);
+        searchInput.style.height = newHeight + 'px';
+        // Enable scrolling only when content exceeds max height
+        searchInput.style.overflowY = searchInput.scrollHeight > maxHeight ? 'auto' : 'hidden';
+    }
+
+    searchInput.addEventListener('input', autoResize);
+
+    // Click on example query to populate search box
+    document.querySelectorAll('#example-list li').forEach(function(item) {
+        item.addEventListener('click', function() {
+            const query = this.getAttribute('data-query');
+            searchInput.value = query;
+            searchInput.focus();
+            autoResize();
+        });
+    });
+
+    // Handle Enter key for search (Enter submits, Shift+Enter adds newline)
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey && this.value.trim()) {
+            e.preventDefault();
+            this.closest('form').submit();
+        }
+    });
+
+    // Initial resize in case there's pre-filled content
+    autoResize();
+</script>
+{% endblock %}

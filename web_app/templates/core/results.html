@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% load static %}
+{% load rag_filters %}
+
+{% block title %}Results - DSA Confluence RAG{% endblock %}
+
+{% block extra_css %}
+<style>
+    .results-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: var(--spacing-xl);
+    }
+
+    .results-header {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-lg);
+        margin-bottom: var(--spacing-lg);
+    }
+
+    .back-link {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+        color: var(--abbvie-medium-blue);
+        font-size: 0.875rem;
+    }
+
+    .query-display {
+        flex: 1;
+    }
+
+    .query-text {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--abbvie-white);
+        margin: 0;
+    }
+
+    .query-meta {
+        font-size: 0.875rem;
+        color: var(--abbvie-medium-gray);
+        margin-top: var(--spacing-xs);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="results-container">
+    <!-- Header with back link and query -->
+    <header class="results-header">
+        <a href="{% url 'core:landing' %}" class="back-link">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+            New Search
+        </a>
+        <div class="query-display">
+            <h1 class="query-text">{{ query_text }}</h1>
+            <p class="query-meta" id="query-meta">Processing...</p>
+        </div>
+    </header>
+
+    <!-- Debug Panel -->
+    {% include "components/debug_panel.html" %}
+
+    <!-- Progress Bar -->
+    {% include "components/progress_bar.html" %}
+
+    <!-- Answer Section -->
+    <div id="answer-section" style="display: none;">
+        {% include "components/answer.html" %}
+    </div>
+
+    <!-- Chart Section -->
+    <div id="chart-section" style="display: none;">
+        {% include "components/chart.html" %}
+    </div>
+
+    <!-- Sources Section -->
+    <div id="sources-section" style="display: none;">
+        {% include "components/sources.html" %}
+    </div>
+
+    <!-- Loading State -->
+    <div id="loading-state" class="loading">
+        <div class="loading-spinner"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/progress.js' %}"></script>
+<script src="{% static 'js/charts.js' %}"></script>
+<script>
+    // Set as global variables for progress.js to access
+    window.queryId = "{{ query_id }}";
+    window.queryText = "{{ query_text|escapejs }}";
+
+    // Initialize WebSocket connection for progress updates
+    document.addEventListener('DOMContentLoaded', function() {
+        initProgressTracking(window.queryId);
+    });
+</script>
+{% endblock %}

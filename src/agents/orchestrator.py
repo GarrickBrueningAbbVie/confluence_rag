@@ -28,37 +28,15 @@ from loguru import logger
 from agents.base import BaseAgent, AgentContext, AgentResult, AgentStatus
 from agents.feedback_controller import FeedbackController
 
+# Import shared patterns (primary source, not duplicated)
+from routing.patterns import is_list_describe_query
+
 # Type hints for optional imports
 try:
     from iliad.client import IliadClient
     from agents.iterative_agent import IterativeDescribeAgent
 except ImportError:
     pass
-
-
-# Patterns for detecting list+describe queries
-LIST_DESCRIBE_PATTERNS = [
-    "list all",
-    "list the",
-    "what projects",
-    "which projects",
-    "show all",
-    "get all",
-    "find all",
-]
-
-DESCRIBE_PATTERNS = [
-    "describe all",
-    "describe each",
-    "describe these",
-    "describe them",
-    "explain all",
-    "explain each",
-    "and describe",
-    "and explain",
-    "then describe",
-    "then explain",
-]
 
 
 @dataclass
@@ -771,17 +749,11 @@ Your synthesized answer:"""
         Returns:
             True if this is a list+describe pattern
         """
-        query_lower = query.lower()
-
-        # Check for both list AND describe keywords
-        has_list = any(pattern in query_lower for pattern in LIST_DESCRIBE_PATTERNS)
-        has_describe = any(pattern in query_lower for pattern in DESCRIBE_PATTERNS)
-
-        if has_list and has_describe:
-            logger.debug(f"Matched list+describe pattern: list={has_list}, describe={has_describe}")
-            return True
-
-        return False
+        # Use the shared function from patterns.py
+        result = is_list_describe_query(query)
+        if result:
+            logger.debug(f"Matched list+describe pattern for query: {query[:50]}...")
+        return result
 
     def _execute_iterative_describe(
         self,
